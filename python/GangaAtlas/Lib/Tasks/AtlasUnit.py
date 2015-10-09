@@ -239,7 +239,7 @@ class AtlasUnit(IUnit):
       if trf.outputdata:
          j.outputdata = trf.outputdata.clone()
       elif j.inputdata and j.inputdata._impl._name == "ATLASLocalDataset" and j.application._impl._name != "TagPrepare":
-         j.outputdata = GPI.ATLASLocalDataset()
+         j.outputdata = GPI.ATLASOutputDataset()
       elif j.application._impl._name != "TagPrepare":
          j.outputdata = GPI.DQ2OutputDataset()
 
@@ -308,9 +308,8 @@ class AtlasUnit(IUnit):
             if trf.subjobs_per_unit > 0:
                j.splitter.numsubjobs = trf.subjobs_per_unit
             else:
-               import math
-                  
-               j.splitter.numsubjobs = math.ceil(len(j.inputdata.names) / nfiles)
+               import math 
+               j.splitter.numsubjobs = int( math.ceil( len(j.inputdata.names) / float(nfiles) ) )
          else:
             j.splitter = DQ2JobSplitter()
             if trf.MB_per_job > 0:
@@ -321,6 +320,11 @@ class AtlasUnit(IUnit):
                j.splitter.numfiles = nfiles
       else:
          j.splitter = trf.splitter.clone()
+
+      # postprocessors
+      if len(self._getParent().postprocessors.process_objects) > 0:
+         import copy
+         j.postprocessors = copy.deepcopy( addProxy(self._getParent()).postprocessors )
          
       return j
 

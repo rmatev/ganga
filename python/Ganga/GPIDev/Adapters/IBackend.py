@@ -8,10 +8,6 @@ from Ganga.GPIDev.Base import GangaObject
 from Ganga.GPIDev.Schema import Schema, Version
 
 import Ganga.Utility.logging
-logger = Ganga.Utility.logging.getLogger()
-
-from Ganga.GPIDev.Lib.File.OutputFileManager import getInputFilesPatterns
-from Ganga.GPIDev.Lib.File import File, ShareDir
 
 from Ganga.Utility.logic import implies
 
@@ -21,9 +17,7 @@ import os
 import itertools
 import time
 
-#import threading
-#pSubmitLock = threading.Lock()
-
+logger = Ganga.Utility.logging.getLogger()
 
 class IBackend(GangaObject):
 
@@ -53,17 +47,6 @@ class IBackend(GangaObject):
 
     def __init__(self):
         super(IBackend, self).__init__()
-##         import sys
-##         frame = sys._getframe(1)
-##         logger = Ganga.Utility.logging.getLogger(frame=frame)
-##         del frame
-##         from Ganga.Utility.util import GenericWrapper, wrap_callable_filter
-# def before(args,kwargs):
-##             args[0] = 'hello'+args[0]
-# return args,kwargs
-# def after():
-# pass
-##         self.logger = GenericWrapper(logger,before,after, forced = ['info','error','warning','critical', 'debug'], wrapper_function=wrap_callable_filter)
 
     def setup(self):
         """ This is a hook called for each job when Ganga.Core services are
@@ -75,8 +58,6 @@ class IBackend(GangaObject):
 
     def _parallel_submit(self, b, sj, sc, master_input_sandbox, fqid, logger):
 
-        #global pSubmitLok
-        #lock = pSubmitLock
         try:
             sj.updateStatus('submitting')
             if b.submit(sc, master_input_sandbox):
@@ -84,22 +65,18 @@ class IBackend(GangaObject):
                 sj.info.increment()
             else:
                 raise IncompleteJobSubmissionError(fqid, 'submission failed')
-        except Exception as x:
-            from Ganga.Utility.logging import log_user_exception
-            sj.updateStatus('new')
+        except Exception as err:
+            #from Ganga.Utility.logging import log_user_exception
+            sj.updateStatus('failed')
+
             from Ganga.Core.exceptions import GangaException
-            if isinstance(x, GangaException):
-                logger.error(str(x))
+            if isinstance(err, GangaException):
+                logger.error(str(err))
                 log_user_exception(logger, debug=True)
             else:
                 log_user_exception(logger, debug=False)
         finally:
             pass
-            #try:
-            #    lock.release()
-            #except:
-            #    Ganga.Utility.logging.log_unknown_exception()
-            #    pass
 
     def master_submit(self, rjobs, subjobconfigs, masterjobconfig, keep_going=False, parallel_submit=False):
         """  Submit   the  master  job  and  all   its  subjobs.   The
@@ -208,7 +185,7 @@ class IBackend(GangaObject):
                     if handleError(IncompleteJobSubmissionError(fqid, 'submission failed')):
                         return 0
             except Exception as x:
-                sj.updateStatus('new')
+                #sj.updateStatus('new')
                 if isinstance(x, GangaException):
                     logger.error(str(x))
                     log_user_exception(logger, debug=True)
@@ -248,6 +225,8 @@ class IBackend(GangaObject):
         """ Prepare the master job (shared sandbox files). This method is/should be called by master_submit() exactly once.
         The input sandbox is created according to self._packed_input_sandbox flag (a class attribute)
         """
+        from Ganga.GPIDev.Lib.File.OutputFileManager import getInputFilesPatterns
+        from Ganga.GPIDev.Lib.File.File import File, ShareDir
 
         job = self.getJobObject()
 

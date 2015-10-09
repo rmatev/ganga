@@ -27,7 +27,7 @@ from GangaAtlas.Lib.ATLASDataset import filecheck
 from Ganga.Lib.Mergers.Merger import *
 from Ganga.Core.GangaRepository import getRegistry
 from Ganga.GPIDev.Lib.File import ShareDir, File
-from Ganga.GPIDev.Base.Proxy import GPIProxyObjectFactory
+from Ganga.GPIDev.Base.Proxy import GPIProxyObjectFactory, GPIProxyObject
 
 from pandatools import AthenaUtils
 from Ganga.Utility.Plugin import allPlugins
@@ -1076,7 +1076,11 @@ class Athena(IPrepareApp):
 
         if not self.atlas_exetype in ['EXE']: 
             rc, runConfig = AthenaUtils.extractRunConfig(jobO, supStream, self.atlas_use_AIDA, shipInput, trf)
-            self.atlas_run_config = runConfig
+            #self.atlas_run_config = runConfig
+            # The above line sometimes doesn't work and sets self.atlas_run_config to False because runConfig isn't just a dictionary
+            # Therefore copy it by hand
+            for k in runConfig:
+                self.atlas_run_config[k] = runConfig[k]
             #self.atlas_run_config = {'input': {}, 'other': {}, 'output': {'outAANT': [('AANTupleStream', 'AANT', 'AnalysisSkeleton.aan.root')], 'alloutputs': ['AnalysisSkeleton.aan.root']}}
             logger.info('Detected Athena run configuration: %s',self.atlas_run_config)
             if not rc:
@@ -1547,6 +1551,9 @@ class AthenaSplitterJob(ISplitter):
                    (job.inputdata._name == 'ATLASLocalDataset'):
                 inputnames=[]
                 numfiles = len(job.inputdata.get_dataset_filenames())
+                if self.numfiles_subjob > 0:
+                    import math
+                    self.numsubjobs = int( math.ceil( numfiles / float(self.numfiles_subjob) ) )
                 if self.match_subjobs_files:
                     self.numsubjobs = numfiles 
                 for i in xrange(self.numsubjobs):    
@@ -1725,9 +1732,21 @@ class AthenaOutputMerger(IMerger):
     # set the automerge to *not* use the output dir of the job
     set_outputdir_for_automerge = False
 
+    def execute(self, job, newstatus):
+        """
+        Overload Execute primarily so merge isn't called with an directory specified
+        """
+        if (len(job.subjobs) != 0):
+            try:
+                return self.merge(job.subjobs)
+            except PostProcessException as e:
+                logger.error(str(e))
+                return self.failure
+        else:
+            return True
+
     def merge(self, subjobs = None, sum_outputdir = None, **options ):
         '''Merge local root tuples of subjobs output'''
-
         import os
         from Ganga.GPIDev.Lib.Job import Job
         job = self._getRoot()
@@ -1773,6 +1792,9 @@ class AthenaOutputMerger(IMerger):
                 outputlocation = job.outputdir
             elif job.outputdata._name=='ATLASOutputDataset':
                 outputlocation = job.outputdir
+
+        if not sum_outputdir and self.sum_outputdir:
+            sum_outputdir = self.sum_outputdir
 
         if sum_outputdir:
             try:
@@ -1873,6 +1895,9 @@ class AthenaOutputMerger(IMerger):
 
         igfailed = False
         igfailedoption = options.get('ignorefailed')
+        if igfailedoption == None:
+            igfailedoption = self.ignorefailed
+
         if igfailedoption == True:
             igfailed = True
         else:

@@ -46,6 +46,8 @@ class ThreadPoolQueueMonitor(object):
         _user_threadpool = self._user_threadpool
         _monitoring_threadpool = self._monitoring_threadpool
 
+        self._locked = False
+
     def _display_element(self, item):
         if hasattr(item, 'name') and item.name != None:
             return item.name
@@ -67,17 +69,15 @@ class ThreadPoolQueueMonitor(object):
             # still count
             if u[0] is not None:
                 # User task has no ganga name
-                name_user = getColour('fg.red') + u[0] + getColour('fg.normal')
+                name_user = getColour('fg.red') + str(u[0]) + getColour('fg.normal')
             else:
                 # User task has a ganga name
-                name_user = getColour('fg.red') + u[1] + getColour('fg.normal')
-            name_monitor = getColour('fg.red') + m[0] + getColour('fg.normal')
+                name_user = getColour('fg.red') + str(u[1]) + getColour('fg.normal')
+            name_monitor = getColour('fg.red') + str(m[0]) + getColour('fg.normal')
             if u[1] == 'idle':
-                name_user = name_user.replace(
-                    getColour('fg.red'), getColour('fg.green'))
+                name_user = name_user.replace(getColour('fg.red'), getColour('fg.green'))
             if m[1] == 'idle':
-                name_monitor = name_monitor.replace(
-                    getColour('fg.red'), getColour('fg.green'))
+                name_monitor = name_monitor.replace(getColour('fg.red'), getColour('fg.green'))
             output += '{0:<35} {1:<26} {2:<15} | {3:<35} {4:<28} {5:<10}\n'.format(
                 name_user, u[1][:30].replace("\n", "\\n"), u[2], name_monitor, m[1][:30].replace("\n", "\\n"), m[2])
 
@@ -92,6 +92,12 @@ class ThreadPoolQueueMonitor(object):
         output += str([self._display_element(i)
                        for i in self._monitoring_threadpool.get_queue()])
         return output
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('tasks...')
+            return
+        p.text(self._display())
 
     def __shouldWaitonShutdown(self):
         from Ganga.Core import getCurrentShutdownPolicy
@@ -211,6 +217,10 @@ class ThreadPoolQueueMonitor(object):
             logger.error("Error Adding internal task!! please report this to the Ganga developers!")
             return
 
+        if self._locked is True:
+            logger.warning("Queue System is locked not adding any more System processes!")
+            return
+
         self._monitoring_threadpool.add_function(worker_code,
                                                  args=args,
                                                  kwargs=kwargs,
@@ -290,6 +300,10 @@ class ThreadPoolQueueMonitor(object):
             logger.error("Input command must be of type 'string'")
             return
 
+        if self._locked is True:
+            logger.warning("Queues system is Locked. Not adding any more processes!")
+            return
+
         self._user_threadpool.add_process(command,
                                           timeout=timeout,
                                           env=env,
@@ -337,8 +351,17 @@ class ThreadPoolQueueMonitor(object):
         num = 0
         num = num + self.totalNumUserThreads()
         num = num + self.totalNumIntThreads()
-
         return num
+
+    def lock(self):
+        self._locked = True
+        self._user_threadpool._locked = True
+        self._monitoring_threadpool._locked = True
+
+    def unlock(self):
+        self._locked = False
+        self._user_threadpool._locked = False
+        self._monitoring_threadpool._locked = False
 
     def _stop_all_threads(self):
         self._user_threadpool._stop_worker_threads()
@@ -349,3 +372,4 @@ class ThreadPoolQueueMonitor(object):
         self._user_threadpool._start_worker_threads()
         self._monitoring_threadpool._start_worker_threads()
         return
+

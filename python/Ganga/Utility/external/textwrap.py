@@ -10,14 +10,6 @@ __revision__ = "$Id: textwrap.py,v 1.1 2008-07-17 16:41:02 moscicki Exp $"
 import string
 import re
 
-# Do the right thing with boolean values for all known Python versions
-# (so this module can be copied to projects that don't depend on Python
-# 2.3, e.g. Optik and Docutils).
-try:
-    True, False
-except NameError:
-    (True, False) = (1, 0)
-
 __all__ = ['TextWrapper', 'wrap', 'fill']
 
 # Hardcode the recognized whitespace characters to the US-ASCII
@@ -155,8 +147,9 @@ class TextWrapper(object):
         i = 0
         pat = self.sentence_end_re
         while i < len(chunks)-1:
-            if chunks[i+1] == " " and pat.search(chunks[i]):
-                chunks[i+1] = "  "
+            j=i+1
+            if chunks[j] == " " and pat.search(chunks[i]):
+                chunks[j] = "  "
                 i += 2
             else:
                 i += 1
@@ -174,8 +167,9 @@ class TextWrapper(object):
         # If we're allowed to break long words, then do so: put as much
         # of the next chunk onto the current line as will fit.
         if self.break_long_words:
-            cur_line.append(chunks[0][0:space_left])
-            chunks[0] = chunks[0][space_left:]
+            chunks_zero = chunks[0]
+            cur_line.append(chunks_zero[0:space_left])
+            chunks[0] = chunks_zero[space_left:]
 
         # Otherwise, we have to preserve the long word intact.  Only add
         # it to the current line if there's nothing already there --
@@ -268,7 +262,7 @@ class TextWrapper(object):
         converted to space.
         """
         text = self._munge_whitespace(text)
-        indent = self.initial_indent
+        #indent = self.initial_indent
         chunks = self._split(text)
         if self.fix_sentence_endings:
             self._fix_sentence_endings(chunks)

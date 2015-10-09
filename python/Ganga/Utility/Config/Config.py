@@ -94,7 +94,6 @@ from functools import reduce
 
 from Ganga.Core.exceptions import GangaException
 
-
 class ConfigError(GangaException):
 
     """ ConfigError indicates that an option does not exist or it cannot be set.
@@ -183,9 +182,9 @@ def getConfig(name):
     be easily shared between different parts of the program."""
 
     name = _migrate_name(name)
-    try:
+    if name in allConfigs:
         return allConfigs[name]
-    except KeyError:
+    else:
         allConfigs[name] = PackageConfig(name, 'Documentation not available')
         return allConfigs[name]
 
@@ -197,7 +196,7 @@ def makeConfig(name, docstring, **kwds):
 
     if _after_bootstrap:
         #import traceback
-        # traceback.print_stack()
+        #traceback.print_stack()
         raise ConfigError(
             'attempt to create a configuration section [%s] after bootstrap' % name)
 
@@ -268,15 +267,14 @@ class ConfigOption(object):
         #    logger = Ganga.Utility.logging.getLogger()
         #    logger.warning('problem with option filter: %s: %s',self.name,x)
 
-        try:
-            session_value = self.transform_PATH_option(
-                session_value, self.session_value)
-        except AttributeError:
+        if hasattr(self, 'session_value'):
+            session_value = self.transform_PATH_option(session_value, self.session_value)
+        else:
             pass
 
-        try:
+        if hasattr(self, 'session_value'):
             old_value = self.session_value
-        except AttributeError:
+        else:
             pass
 
         self.session_value = session_value
@@ -291,15 +289,14 @@ class ConfigOption(object):
             logger = getLogger()
             logger.warning('problem with option filter: %s: %s', self.name, x)
 
-        try:
-            user_value = self.transform_PATH_option(
-                user_value, self.user_value)
-        except AttributeError:
+        if hasattr(self, 'user_value'):
+            user_value = self.transform_PATH_option(user_value, self.user_value)
+        else:
             pass
 
-        try:
+        if hasattr(self, 'user_value'):
             old_value = self.user_value
-        except AttributeError:
+        else:
             pass
 
         self.user_value = user_value
@@ -314,45 +311,41 @@ class ConfigOption(object):
             raise x
 
     def overrideDefaultValue(self, default_value):
-        try:
-            default_value = self.transform_PATH_option(
-                default_value, self.default_value)
-        except AttributeError:
+        if hasattr(self, 'default_value'):
+            default_value = self.transform_PATH_option(default_value, self.default_value)
+        else:
             pass
         self.default_value = default_value
         self.convert_type('user_value')
         self.convert_type('session_value')
 
     def __getattr__(self, name):
+
         if name == 'value':
             values = []
 
             for n in ['user', 'session', 'default']:
-                try:
-                    values.append(getattr(self, n + '_value'))
-                except AttributeError:
+                str_val = n+'_value'
+                if hasattr(self, str_val):
+                    values.append(getattr(self, str_val))
+                else:
                     pass
 
-            if values:
-                return reduce(self.transform_PATH_option, values)
-
-            # for n in ['user','session','default']:
-            #    try:
-            #        return getattr(self,n+'_value')
-            #    except AttributeError:
-            #        pass
+            if values != []:
+                returnable = reduce(self.transform_PATH_option, values)
+                return returnable
 
         if name == 'level':
 
             for level, name in [(0, 'user'), (1, 'session'), (2, 'default')]:
                 if hasattr(self, name + '_value'):
                     return level
+
         raise AttributeError(name)
 
     def __setattr__(self, name, value):
         if name in ['value', 'level']:
-            raise AttributeError(
-                'Cannot set "%s" attribute of the option object' % name)
+            raise AttributeError('Cannot set "%s" attribute of the option object' % name)
         else:
             self.__dict__[name] = value
 
@@ -397,11 +390,9 @@ class ConfigOption(object):
         if isinstance(value, str) and cast_type is not str:
             try:
                 new_value = eval(value, config_scope)
-                logger.debug(
-                    'applied eval(%s) -> %s (%s)', value, new_value, optdesc)
+                logger.debug('applied eval(%s) -> %s (%s)', value, new_value, optdesc)
             except Exception as x:
-                logger.debug(
-                    'ignored failed eval(%s): %s (%s)', value, x, optdesc)
+                logger.debug('ignored failed eval(%s): %s (%s)', value, x, optdesc)
 
         # check the type of the value unless the cast_type is not NoneType
         logger.debug('checking value type: %s (%s)', str(cast_type), optdesc)
@@ -504,31 +495,46 @@ class PackageConfig(object):
     def addOption(self, name, default_value, docstring, override=False, **meta):
 
         if _after_bootstrap and not self.is_open:
-            raise ConfigError(
-                'attempt to add a new option [%s]%s after bootstrap' % (self.name, name))
+            raise ConfigError('attempt to add a new option [%s]%s after bootstrap' % (self.name, name))
 
-        try:
+        if name in self.options:
             option = self.options[name]
-        except KeyError:
+        else:
             option = ConfigOption(name)
 
         if option.check_defined() and not override:
             logger = getLogger()
-            #import traceback
-            # traceback.print_stack()
-            logger.warning(
-                'attempt to add again the option [%s]%s (ignored)', self.name, name)
+            logger.warning('attempt to add again the option [%s]%s (ignored)', self.name, name)
             return
 
         option.defineOption(default_value, docstring, **meta)
         self.options[option.name] = option
 
-        try:
-            session_value = allConfigFileValues[self.name][option.name]
-            option.setSessionValue(session_value)
-            del allConfigFileValues[self.name][option.name]
-        except KeyError:
-            pass
+        if self.name in allConfigFileValues.keys():
+            conf_value = allConfigFileValues[self.name]
+        else:
+            msg = "Error getting ConfigFileValue Option: %s" % str(self.name)
+            if 'logger' in locals().keys() and logger is not None:
+                logger.debug("%s"%msg)
+            else:
+                ##uncomment for debugging
+                ##print("%s" % msg)
+                pass
+            conf_value = dict()
+
+        if option.name in conf_value.keys():
+            session_value = conf_value[option.name]
+            try:
+                option.setSessionValue(session_value)
+                del conf_value[option.name]
+            except Exception, err:
+                msg = "Error Setting Session Value: %s" % str(err)
+                if 'logger' in locals().keys() and logger is not None:
+                    logger.debug("%s"%msg)
+                else:
+                    ##uncomment for debugging
+                    ##print("%s" % msg)
+                    pass
 
 
 # set the GPI proxy object if already created, if not it will be created by bootstrap() function in the GPI Config module
@@ -547,8 +553,7 @@ class PackageConfig(object):
 
         logger = getLogger()
 
-        logger.debug(
-            'trying to set session option [%s]%s = %s', self.name, name, value)
+        logger.debug('trying to set session option [%s]%s = %s', self.name, name, value)
 
         for h in self._session_handlers:
             value = h[0](name, value)
@@ -571,34 +576,38 @@ class PackageConfig(object):
 
         logger = getLogger()
 
-        logger.debug(
-            'trying to set user option [%s]%s = %s', self.name, name, value)
+        logger.debug('trying to set user option [%s]%s = %s', self.name, name, value)
 
-        for h in self._user_handlers:
-            value = h[0](name, value)
+        for handler in self._user_handlers:
+            value = handler[0](name, value)
 
         self.options[name].setUserValue(value)
 
-        logger.debug(
-            'successfully set user option [%s]%s = %s', self.name, name, value)
+        logger.debug('successfully set user option [%s]%s = %s', self.name, name, value)
 
-        for h in self._user_handlers:
-            h[1](name, value)
+        for handler in self._user_handlers:
+            handler[1](name, value)
 
     def overrideDefaultValue(self, name, val):
         self.options[name].overrideDefaultValue(val)
 
     def revertToSession(self, name):
-        try:
-            del self.options[name].user_value
-        except AttributeError:
+        if name in self.options:
+            if hasattr(self.options[name], 'user_value'):
+                self.options[name].user_value
+            else:
+                pass
+        else:
             pass
 
     def revertToDefault(self, name):
         self.revertToSession(name)
-        try:
-            del self.options[name].session_value
-        except AttributeError:
+        if name in self.options:
+            if hasattr(self.options[name], 'session_value'):
+                del self.options[name].session_value
+            else:
+                pass
+        else:
             pass
 
     def revertToSessionOptions(self):
@@ -617,26 +626,23 @@ class PackageConfig(object):
         return eff
 
     def getEffectiveOption(self, name):
-        try:
+        if name in self.options:
             return self.options[name].value
-        except KeyError:
+        else:
             logger = getLogger()
-            logger.debug(
-                "Effective Option %s NOT FOUND, Effective Options are:" % (name))
+            logger.debug("Effective Option %s NOT FOUND, Effective Options are:" % (name))
             opts = self.getEffectiveOptions()
-            for i in opts:
-                logger.debug("\t%s" % (i))
-            raise ConfigError(
-                'option "%s" does not exist in "%s"' % (name, self.name))
+            for k, v in opts.iteritems():
+                logger.debug("\n\t%s:%s" % (str(k), str(v)))
+            raise ConfigError('option "%s" does not exist in "%s"' % (name, self.name))
 
     def getEffectiveLevel(self, name):
         """ Return 0 if option is effectively set at the user level, 1
         if at session level or 2 if at default level """
-        try:
+        if name in self.options:
             return self.options[name].level
-        except KeyError as x:
-            raise ConfigError(
-                'option "%s" does not exist in "%s"' % (x, self.name))
+        else:
+            raise ConfigError('option "%s" does not exist in "%s"' % (x, self.name))
 
     def attachUserHandler(self, pre, post):
         """ Attach a user handler:
@@ -673,11 +679,17 @@ class PackageConfig(object):
             if not self.options[o].check_defined():
                 del self.options[o]
 
-import ConfigParser
+try:
+    import ConfigParser
+    GangaConfigParser = ConfigParser.SafeConfigParser
+except ImportError:
+    # For Python 3
+    import configparser as ConfigParser
+    GangaConfigParser = ConfigParser.ConfigParser
 
 
 def make_config_parser(system_vars):
-    cfg = ConfigParser.ConfigParser()
+    cfg = GangaConfigParser()
     cfg.optionxform = str  # case sensitive
     cfg.defaults().update(system_vars)
     return cfg
@@ -713,24 +725,23 @@ def transform_PATH_option(name, new_value, current_value):
 
     PATH_ITEM = '_PATH'
     if name[-len(PATH_ITEM):] == PATH_ITEM:
-        logger.debug(
-            'PATH-like variable: %s %s %s', name, new_value, current_value)
+        logger.debug('PATH-like variable: %s %s %s', name, new_value, current_value)
         if current_value is None:
             ret_value = new_value
         elif new_value[:3] != ':::':
-            logger.debug(
-                'Prepended %s to PATH-like variable %s', new_value, name)
+            logger.debug('Prepended %s to PATH-like variable %s', new_value, name)
             ret_value = new_value + ':' + current_value
+            new_value = ""
         else:
-            logger.debug(
-                'Resetting PATH-like variable %s to %s', name, new_value)
+            logger.debug('Resetting PATH-like variable %s to %s', name, new_value)
             ret_value = new_value  # [3:]
+            new_value = ":::"
 
         # remove duplicate path entries
-        if ret_value[:3] == ':::':
-            new_value = ":::"
-        else:
-            new_value = ""
+        #if ret_value[:3] == ':::':
+        #    new_value = ":::"
+        #else:
+        #    new_value = ""
 
         for tok in ret_value.strip(":").split(":"):
             if new_value.find(tok) == -1 or tok == "":
@@ -776,21 +787,21 @@ def read_ini_files(filenames, system_vars):
             for name in cc.options(sec):
                 try:
                     value = cc.get(sec, name)
-                except ConfigParser.InterpolationMissingOptionError, err:
-                    #print("Can't expand config %s:%s treating it as raw" % (str(sec),str(name)))
+                except (ConfigParser.InterpolationMissingOptionError, ConfigParser.InterpolationSyntaxError) as err:
+                    logger.debug("Parse Error!:\n  %s" % str(err))
                     value = cc.get(sec, name, raw=True)
+                    #raise err
 
                 for localvar in re.finditer('\$\{[^${}]*\}', value):
                     localvarstripped = re.sub(r'[^\w]', '', localvar.group(0))
                     try:
-                        value = value.replace(
-                            localvar.group(0), cc.get(sec, localvarstripped))
-                    except:
+                        value = value.replace(localvar.group(0), cc.get(sec, localvarstripped))
+                    except Exception, err:
                         Ganga.Utility.logging.log_unknown_exception()
-                        logger.debug(
-                            'The variable \"' + localvarstripped + '\" is referenced but not defined in the ')
-                        logger.debug(
-                            '[' + sec + '] configuration section of ' + f)
+                        logger.debug('The variable \"' + localvarstripped + '\" is referenced but not defined in the ')
+                        logger.debug('[' + sec + '] configuration section of ' + f)
+                        logger.debug("err: %s" % str(err))
+
                 # do not put the DEFAULTS into the sections (no need)
                 if name in cc.defaults().keys():
                     continue
@@ -801,9 +812,12 @@ def read_ini_files(filenames, system_vars):
                     current_value = main.get(sec, name)
                 except ConfigParser.NoOptionError:
                     current_value = None
-                except ConfigParser.InterpolationMissingOptionError, err:
+                except (ConfigParser.InterpolationMissingOptionError, ConfigParser.InterpolationSyntaxError) as err:
+                    logger.debug("Parse Error!:\n  %s" % str(err))
                     logger.debug("Failed to expand, Importing value %s:%s as raw" % (str(sec), str(name)))
                     current_value = main.get(sec, name, raw=True)
+                    current_value = current_value.replace('%', '%%')
+                    #raise err
 
                 value = transform_PATH_option(name, value, current_value)
 
@@ -820,21 +834,28 @@ def read_ini_files(filenames, system_vars):
 
                     # is env variable
                     envval = ''
-                    logger.debug(
-                        'looking for ' + str(envvarclean) + ' in the shell environment')
+                    logger.debug('looking for ' + str(envvarclean) + ' in the shell environment')
                     if envvarclean in os.environ:
                         envval = os.environ[envvarclean]
-                        logger.debug(
-                            str(envvarclean) + ' is set as ' + envval + ' in the shell environment')
+                        logger.debug(str(envvarclean) + ' is set as ' + envval + ' in the shell environment')
                         value = value.replace(envvar, envval)
                     else:
-                        logger.debug(
-                            'The configuration file ' + f + ' references an unset environment variable: ' + str(envvarclean))
+                        logger.debug('The configuration file ' + f + ' references an unset environment variable: ' + str(envvarclean))
 
                 # FIXME: strip trailing whitespaces -- SHOULD BE DONE BEFORE IF
                 # AT ALL?
                 value = value.rstrip()
-                main.set(sec, name, value)
+                value = value.replace('%', '%%')
+                try:
+                    main.set(sec, name, value)
+                except Exception as err:
+                    value = value.replace('%', '%%')
+                    logger.debug("Error Setting %s" % str(err))
+                    try:
+                        main.set(sec, name, value)
+                    except Exception, err2:
+                        logger.debug("Error setting #2: %s" % str(err2))
+                        raise err
 
     return main
 
@@ -880,8 +901,9 @@ def configure(filenames, system_vars):
                 continue
             try:
                 v = cfg.get(name, o)
-            except ConfigParser.InterpolationMissingOptionError, err:
+            except (ConfigParser.InterpolationMissingOptionError, ConfigParser.InterpolationSyntaxError) as err:
                 logger = getLogger()
+                logger.debug("Parse Error!:\n  %s" % str(err))
                 logger.warning("Can't expand the config file option %s:%s, treating it as raw" % (str(name), str(o)))
                 v = cfg.get(name, o, raw=True)
             setSessionValue(name, o, v)
@@ -901,18 +923,17 @@ def load_user_config(filename, system_vars):
             # supressing these messages as depending on what stage of the bootstrap.py you
             # call the function more or less of the default options have been loaded
             # currently calling after initialise() could call after bootstrap()
-            logger.debug(
-                "Section '%s' defined in '%s' is not valid exists and will be removed" % (name, filename))
+            logger.debug("Section '%s' defined in '%s' is not valid exists and will be removed" % (name, filename))
             continue
 
         for o in new_cfg.options(name):
             if o not in current_cfg_section.options:
-                logger.warning("Option '[%s] %s' defined in '%s' is not valid and will be removed" % (
-                    name, o, filename))
+                logger.warning("Option '[%s] %s' defined in '%s' is not valid and will be removed" % (name, o, filename))
                 continue
             try:
                 v = new_cfg.get(name, o)
-            except ConfigParser.InterpolationMissingOptionError, err:
+            except (ConfigParser.InterpolationMissingOptionError, ConfigParser.InterpolationSyntaxError) as err:
+                logger.debug("Parse Error!:\n  %s" % str(err))
                 logging.debug("Failed to expand %s:%s, loading it as raw" % (str(name), str(o)))
                 v = new_cfg.get(name, o, raw=True)
             current_cfg_section.setUserValue(o, v)
@@ -969,9 +990,9 @@ def sanityCheck():
 
     for name in allConfigFileValues:
         opts = allConfigFileValues[name]
-        try:
+        if name in allConfigs:
             cfg = allConfigs[name]
-        except KeyError:
+        else:
             logger.error("unknown configuration section: [%s]", name)
             continue
 
@@ -1010,3 +1031,4 @@ def getFlavour():
         return 'Atlas'
 
     return ''
+

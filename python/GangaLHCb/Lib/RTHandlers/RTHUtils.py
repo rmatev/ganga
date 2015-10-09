@@ -6,68 +6,69 @@ import Ganga.Utility.Config
 from Ganga.Utility.files import expandfilename
 from Ganga.GPIDev.Lib.File import FileBuffer, File
 import Ganga.Utility.logging
-from GangaLHCb.Lib.LHCbDataset.LHCbDatasetUtils import *
-from GangaDirac.Lib.RTHandlers.DiracRTHUtils import diracAPI_script_template
+from GangaDirac.Lib.RTHandlers.DiracRTHUtils import diracAPI_script_template, dirac_outputfile_jdl
 from Ganga.GPIDev.Base.Proxy import isType
 from GangaGaudi.Lib.Applications.Gaudi import Gaudi
 from Ganga.GPIDev.Lib.Tasks.TaskApplication import TaskApplication
 logger = Ganga.Utility.logging.getLogger()
 #\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\#
 
+
 def jobid_as_string(job):
-    jstr=''
-    if job.master: jstr=str(job.master.id)+os.sep+str(job.id)
-    else: jstr=str(job.id)
+    jstr = ''
+    if job.master:
+        jstr = str(job.master.id) + os.sep + str(job.id)
+    else:
+        jstr = str(job.id)
     return jstr
 
+def lhcbdirac_outputfile_jdl(output_files):
+
+    DiracScript = dirac_outputfile_jdl(output_files)
+
+    DiracScript = DiracScript.replace('###OUTPUT_SE###', '###OUTPUT_SE###,replicate=\'###REPLICATE###\'')
+
+    DiracScript = DiracScript.replace('outputPath', 'OutputPath').replace('outputSE', 'OutputSE')
+
+    return DiracScript
 
 def lhcbdiracAPI_script_template():
 
     DiracScript = diracAPI_script_template()
 
-    DiracLHCb_Options = 'j.setRootMacro(\'###ROOT_VERSION###\', \'###ROOT_MACRO###\', ###ROOT_ARGS###, \'###ROOT_LOG_FILE###\', systemConfig=\'###PLATFORM###\')\n'
-    DiracLHCb_Options += 'j.setRootPythonScript(\'###ROOTPY_VERSION###\', \'###ROOTPY_SCRIPT###\', ###ROOTPY_ARGS###, \'###ROOTPY_LOG_FILE###\', systemConfig=\'###PLATFORM###\')\n'
-    DiracLHCb_Options += 'j.setApplicationScript(\'###APP_NAME###\',\'###APP_VERSION###\',\'###APP_SCRIPT###\',logFile=\'###APP_LOG_FILE###\', systemConfig=\'###PLATFORM###\')\n'
-    DiracLHCb_Options += 'j.setAncestorDepth(###ANCESTOR_DEPTH###)\n'
+##  Old Probably deprecated additionsl options
+#    j.setRootMacro('###ROOT_VERSION###', '###ROOT_MACRO###', ###ROOT_ARGS###, '###ROOT_LOG_FILE###', systemConfig='###PLATFORM###')
+#    j.setRootPythonScript('###ROOTPY_VERSION###', '###ROOTPY_SCRIPT###', ###ROOTPY_ARGS###, '###ROOTPY_LOG_FILE###', systemConfig='###PLATFORM###')
 
-    DiracScript = DiracScript.replace('outputPath','OutputPath').replace('outputSE','OutputSE')
-    DiracScript = DiracScript.replace('\'###EXE_LOG_FILE###\'','\'###EXE_LOG_FILE###\', systemConfig=\'###PLATFORM###\'')
-    DiracScript = DiracScript.replace('j.setPlatform( \'ANY\' )', 'j.setDIRACPlatform()' )
-    DiracScript = DiracScript.replace('###OUTPUT_SE###','###OUTPUT_SE###,replicate=\'###REPLICATE###\'' )
+    DiracLHCb_Options = """
+j.setApplicationScript('###APP_NAME###', '###APP_VERSION###', '###APP_SCRIPT###', logFile='###APP_LOG_FILE###', systemConfig='###PLATFORM###')
+j.setAncestorDepth(###ANCESTOR_DEPTH###)
+"""
+
+
+    DiracScript = DiracScript.replace('\'###EXE_LOG_FILE###\'', '\'###EXE_LOG_FILE###\', systemConfig=\'###PLATFORM###\'')
+    DiracScript = DiracScript.replace('j.setPlatform( \'ANY\' )', 'j.setDIRACPlatform()')
 
     setName_str = 'j.setName(\'###NAME###\')'
-    DiracScript = DiracScript.replace(setName_str, "%s\n%s" % (setName_str, DiracLHCb_Options) )
+    DiracScript = DiracScript.replace(setName_str, "%s\n%s" % (setName_str, DiracLHCb_Options))
 
     return DiracScript
 
-
-## def get_master_input_sandbox(job,extra):
-##     sandbox = job.inputsandbox[:]
-##     sandbox += extra.master_input_files[:]
-##     buffers = extra.master_input_buffers
-##     sandbox += [FileBuffer(n,s) for (n,s) in buffers.items()]
-##     logger.debug("Master input sandbox: %s",str(sandbox))
-##     return sandbox
-
-## def get_input_sandbox(extra):
-##      sandbox = []
-##      sandbox += extra.input_files[:]
-##      sandbox += [FileBuffer(n,s) for (n,s) in extra.input_buffers.items()]
-##      logger.debug("Input sandbox: %s",str(sandbox))
-##      return sandbox
 
 def is_gaudi_child(app):
     if isType(app, Gaudi):
         return True
 
-    if isType( app, TaskApplication):
+    if isType(app, TaskApplication):
         from Ganga.GPI import GaudiPythonTask, BenderTask
-        if not isType( app, GaudiPythonTask) and not isType( app, BenderTask):
+        if not isType(app, GaudiPythonTask) and not isType(app, BenderTask):
             return True
 
     return False
 
+
 class filenameFilter:
+
     def __init__(self, filename):
         self.filename = filename
 
@@ -76,114 +77,41 @@ class filenameFilter:
 
 
 def getXMLSummaryScript(indent=''):
-  '''Returns the necessary script to parse and make sense of the XMLSummary data'''
-  import inspect
-  from GangaLHCb.Lib.Applications.AppsBaseUtils import activeSummaryItems
-  script  = "###INDENT#### Parsed XMLSummary data extraction methods\n"
-  
-  for summaryItem in activeSummaryItems().values():
-    script += ''.join(['###INDENT###'+line for line in inspect.getsourcelines(summaryItem)[0]])
-  script += ''.join(['###INDENT###'+line for line in inspect.getsourcelines(activeSummaryItems)[0]])
-##     script += inspect.getsource(summaryItem)
-##   script += inspect.getsource(activeSummaryItems)
+    '''Returns the necessary script to parse and make sense of the XMLSummary data'''
+    import inspect
+    from GangaLHCb.Lib.Applications.AppsBaseUtils import activeSummaryItems
+    script = "###INDENT#### Parsed XMLSummary data extraction methods\n"
 
-  script += """
-###INDENT#### XMLSummary parsing
-###INDENT###import os, sys
-###INDENT###if 'XMLSUMMARYBASEROOT' not in os.environ:
-###INDENT###    sys.stderr.write(\"\'XMLSUMMARYBASEROOT\' env var not defined so summary.xml not parsed\")
-###INDENT###else:
-###INDENT###    schemapath  = os.path.join(os.environ['XMLSUMMARYBASEROOT'],'xml/XMLSummary.xsd')
-###INDENT###    summarypath = os.path.join(os.environ['XMLSUMMARYBASEROOT'],'python/XMLSummaryBase')
-###INDENT###    sys.path.append(summarypath)
-###INDENT###    import summary
-###INDENT###
-###INDENT###    outputxml = os.path.join(os.getcwd(), 'summary.xml')
-###INDENT###    if not os.path.exists(outputxml):
-###INDENT###        sys.stderr.write(\"XMLSummary not passed as \'summary.xml\' not present in working dir\")
-###INDENT###    else:
-###INDENT###        try:
-###INDENT###            XMLSummarydata = summary.Summary(schemapath,construct_default=False)
-###INDENT###            XMLSummarydata.parse(outputxml)
-###INDENT###        except:
-###INDENT###            sys.stderr.write(\"Failure when parsing XMLSummary file \'summary.xml\'\")
-###INDENT###
-###INDENT###        # write to file
-###INDENT###        #with open('__parsedxmlsummary__','w') as parsedXML: #removed for python 2.4 compatibility
-###INDENT###        try:  
-###INDENT###            fn = open('__parsedxmlsummary__','w')
-###INDENT###            for name, method in activeSummaryItems().iteritems():
-###INDENT###                try:
-###INDENT###                    fn.write( '%s = %s\\n' % ( name, str(method(XMLSummarydata)) ) )
-###INDENT###                except Exception, e:
-###INDENT###                    #import traceback
-###INDENT###                    fn.write( '%s = None\\n' % name )
-###INDENT###                    #sys.stderr.write('XMLSummary error: Failed to run the method \"%s\"\\n%s\\n' % (name,traceback.format_exc()))
-###INDENT###                    sys.stderr.write('XMLSummary warning: Method \"%s\" not available for this job\\n' % name)
-###INDENT###        except:
-###INDENT###            sys.stderr.write('XMLSummary error: Failed to create __parsedxmlsummary__ file')
-###INDENT###        finally:
-###INDENT###            fn.close()  
-"""
-  return script.replace('###INDENT###',indent)
+    for summaryItem in activeSummaryItems().values():
+        script += ''.join(['###INDENT###' + line for line in inspect.getsourcelines(summaryItem)[0]])
+    script += ''.join(['###INDENT###' + line for line in inspect.getsourcelines(activeSummaryItems)[0]])
 
-def create_runscript():
+    import inspect
+    script_location = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))),
+                                   'XMLWorkerScript.py')
 
-  from GangaLHCb.Lib.Applications.EnvironFunctions import construct_run_environ
-  environ_script = construct_run_environ()
+    from Ganga.GPIDev.Lib.File import FileUtils
+    xml_script = FileUtils.loadScript(script_location, '###INDENT###')
 
-  script = str("""#!/usr/bin/env python
+    script += xml_script
 
-import os,sys
-opts = '###OPTS###'
-project_opts = '###PROJECT_OPTS###'
-app = '###APP_NAME###'
-app_upper = app.upper()
-version = '###APP_VERSION###'
-package = '###APP_PACKAGE###'
-platform = '###PLATFORM###'
+    return script.replace('###INDENT###', indent)
 
 
-# check that options file exists
-if not os.path.exists(opts):
-    opts = 'notavailable'
-    os.environ['JOBOPTPATH'] = opts
-else:
-    os.environ['JOBOPTPATH'] = os.path.join(os.environ[app + '_release_area'],
-                                            app_upper,
-                                            app_upper,
-                                            version,
-                                            package,
-                                            app,
-                                            version,
-                                            'options',
-                                            'job.opts')
-    print 'Using the master optionsfile:', opts
-    sys.stdout.flush()
+def create_runscript(useCmake=False):
 
-# # # # # Code to Setup Environment # # # # #
-###CONSTRUCT_ENVIRON###
-# # # # # Code to Setup Environment # # # # #
+    from GangaLHCb.Lib.Applications.EnvironFunctions import construct_run_environ
+    environ_script = construct_run_environ(useCmake)
 
-# add lib subdir in case user supplied shared libs where copied to pwd/lib
-os.environ['LD_LIBRARY_PATH'] = '.:%s/lib:%s\' %(os.getcwd(),
-                                                 os.environ['LD_LIBRARY_PATH'])
-                                                 
-#run
-sys.stdout.flush()
-os.environ['PYTHONPATH'] = '%s/InstallArea/python:%s' % \\
-                            (os.getcwd(), os.environ['PYTHONPATH'])
-os.environ['PYTHONPATH'] = '%s/InstallArea/%s/python:%s' % \\
-                            (os.getcwd(), platform,os.environ['PYTHONPATH'])
+    import inspect
+    script_location = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))),
+                                                   'WorkerScript.py')
 
-cmdline = '''###CMDLINE###'''
+    from Ganga.GPIDev.Lib.File import FileUtils
+    worker_script = FileUtils.loadScript(script_location, '')
 
-# run command
-os.system(cmdline)
+    worker_script = worker_script.replace('###CONSTRUCT_ENVIRON###', environ_script)
 
-###XMLSUMMARYPARSING###
-""").replace( '###CONSTRUCT_ENVIRON###', environ_script )
-
-  return script
+    return worker_script
 
 #\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\#

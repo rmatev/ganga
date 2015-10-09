@@ -34,6 +34,7 @@
 
 import os
 import re
+import stat
 import tempfile
 import time
 import signal
@@ -82,7 +83,7 @@ class Shell(object):
 
         os.environ['FOO'] = '$NO_BAR'
         s = Shell()
-        if os.environ.not has_key('NO_BAR'):
+        if 'NO_BAR' not in os.environ:
            assert s.env['FOO'] == '$NO_BAR'
 
         """
@@ -102,8 +103,7 @@ class Shell(object):
             logger.debug("Using CWD: %s" % this_cwd)
             setup_cmd = 'source %s %s > /dev/null 2>&1; python -c "from __future__ import print_function; import os; print(os.environ)"' % (setup, " ".join(setup_args))
             logger.debug('Running: %s', setup_cmd)
-            pipe = subprocess.Popen(setup_cmd,
-                                    env=env, cwd=this_cwd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            pipe = subprocess.Popen(setup_cmd, env=env, cwd=this_cwd, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
             output = pipe.communicate()
             rc = pipe.poll()
             if rc:
@@ -220,7 +220,6 @@ class Shell(object):
 
         with open(outfile) as out_file:
             output = out_file.read()
-        import os
         os.unlink(outfile)
 
         return rc, output, m

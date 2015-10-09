@@ -130,6 +130,12 @@ class ConfigProxy(object):
 
         return sio.getvalue()
 
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('config...')
+            return
+        p.text(self._display(colour=True))
+
 
 class MainConfigProxy(object):
 
@@ -162,6 +168,12 @@ class MainConfigProxy(object):
 
     def __str__(self):
         return self._display(False)
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('registry...')
+            return
+        p.text(self._display(True))
 
     def _display(self, colour):
         from Ganga.Utility.ColourText import ANSIMarkup, NoMarkup, Foreground, Effects
@@ -261,8 +273,7 @@ def config_file_as_text():
                         if len(lines) > 1:
                             value = "\n# ".join(lines)
                             def_value = "\n# ".join(def_lines)
-                    except:
-                        Ganga.Utility.logging.log_unknown_exception()
+                    except AttributeError:
                         pass
                     text += '#%s = %s\n' % (o, def_value)
                     text += '%s = %s\n\n' % (o, value)

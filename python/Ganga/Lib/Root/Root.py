@@ -8,7 +8,6 @@ from __future__ import print_function
 
 from Ganga.GPIDev.Adapters.IPrepareApp import IPrepareApp
 from Ganga.GPIDev.Adapters.IRuntimeHandler import IRuntimeHandler
-#from Ganga.GPIDev.Schema import FileItem, Schema, SimpleItem, Version, SharedItem
 from Ganga.GPIDev.Schema import Schema, Version, SimpleItem, FileItem
 from Ganga.GPIDev.Lib.File import File, ShareDir
 
@@ -18,26 +17,46 @@ from Ganga.Utility.root import getrootsys, getpythonhome
 from Ganga.Core import ApplicationPrepareError
 
 import Ganga.Utility.logging
-logger = Ganga.Utility.logging.getLogger()
-
-#config = getConfig('Root_Properties')
-
-import sys
-config = makeConfig('ROOT', "Options for Root backend")
-config.addOption('arch', 'x86_64-slc6-gcc48-opt', 'Architecture of ROOT')
-config.addOption(
-    'location', '/afs/cern.ch/sw/lcg/releases/LCG_72root6/ROOT/${version}/${arch}/', 'Location of ROOT')
-config.addOption(
-    'path', '', 'Set to a specific ROOT version. Will override other options.')
-config.addOption('pythonhome', '/afs/cern.ch/sw/lcg/releases/LCG_72root6/Python/${pythonversion}/${arch}/',
-                 'Location of the python used for execution of PyROOT script')
-config.addOption('pythonversion', '2.7.6',
-                 "Version number of python used for execution python ROOT script")
-config.addOption('version', '6.02.03', 'Version of ROOT')
-
+import inspect
 import os
+import sys
+import tempfile
 from Ganga.Utility.files import expandfilename
 
+logger = Ganga.Utility.logging.getLogger()
+
+def getLCGRootPath():
+
+    lcg_release_areas = {'afs' : '/afs/cern.ch/sw/lcg/releases/LCG_79',
+    'cvmfs' : '/cvmfs/lhcb.cern.ch/lib/lcg/releases/LCG_79'}
+
+    ## CAUTION This could be sensitive to mixed AFS/CVMFS running but I doubt this setup is common or likely
+    myCurrentPath = os.path.abspath(inspect.getfile(inspect.currentframe()))
+
+    if myCurrentPath[:4].upper() == '/AFS':
+        return lcg_release_areas['afs']
+    elif myCurrentPath[:6].upper() == '/CVMFS':
+        return lcg_release_areas['cvmfs']
+    else:
+        return ''
+
+config = makeConfig('ROOT', "Options for Root backend")
+## Not needed when we can't do option substitution internally but support it at the .gangarc level!!!!! 27-09-2015 rcurrie
+#config.addOption('lcgpath', getLCGRootPath(), 'Path of the LCG release that the ROOT project and it\'s externals are taken from')
+config.addOption('arch', 'x86_64-slc6-gcc48-opt', 'Architecture of ROOT')
+## Auto-Interporatation doesn't appear to work when setting the default value
+#config.addOption('location', '${lcgpath}/ROOT/${version}/${arch}/', 'Location of ROOT')
+config.addOption('location', '%s/ROOT/6.04.02/x86_64-slc6-gcc48-opt' % getLCGRootPath(), 'Location of ROOT')
+config.addOption('path', '', 'Set to a specific ROOT version. Will override other options.')
+## Doesn't appear to work see above ^^^
+#config.addOption('pythonhome', '${lcgpath}/Python/${pythonversion}/${arch}/','Location of the python used for execution of PyROOT script')
+config.addOption('pythonhome', '%s/Python/2.7.9.p1/x86_64-slc6-gcc48-opt' % getLCGRootPath(), 'Location of the python used for execution of PyROOT script')
+config.addOption('pythonversion', '2.7.9.p1', "Version number of python used for execution python ROOT script")
+config.addOption('version', '6.04.02', 'Version of ROOT')
+
+def getDefaultScript():
+    name = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))), 'defaultRootScript.C')
+    return File(name)
 
 class Root(IPrepareApp):
 
@@ -64,7 +83,7 @@ class Root(IPrepareApp):
     and 10, you would do the following:
 
     r = Root()
-    r.version = '6.02.03'
+    r.version = '6.04.02'
     r.script = '~/abc/analysis.C'
     r.args = ['Minbias', 10]
 
@@ -209,9 +228,9 @@ class Root(IPrepareApp):
 
     """
     _schema = Schema(Version(1, 1), {
-        'script': FileItem(defvalue=File(), preparable=1, doc='A File object specifying the script to execute when Root starts', checkset='_checkset_script'),
+        'script': FileItem(defvalue=getDefaultScript(), preparable=1, doc='A File object specifying the script to execute when Root starts', checkset='_checkset_script'),
         'args': SimpleItem(defvalue=[], typelist=['str', 'int'], sequence=1, doc="List of arguments for the script. Accepted types are numerics and strings"),
-        'version': SimpleItem(defvalue='6.02.03', doc="The version of Root to run"),
+        'version': SimpleItem(defvalue='6.04.02', doc="The version of Root to run"),
         'usepython': SimpleItem(defvalue=False, doc="Execute 'script' using Python. The PyRoot libraries are added to the PYTHONPATH."),
         'is_prepared': SimpleItem(defvalue=None, strict_sequence=0, visitable=1, copyable=1, typelist=['type(None)', 'bool'], protected=0, comparable=1, doc='Location of shared resources. Presence of this attribute implies the application has been prepared.'),
         'hash': SimpleItem(defvalue=None, typelist=['type(None)', 'str'], hidden=1, doc='MD5 hash of the string representation of applications preparable attributes')
@@ -300,6 +319,8 @@ class RootRTHandler(IRuntimeHandler):
 
         rootsys = getrootsys(version)
 
+        logger.info("rootsys: %s" % str(rootsys))
+
         rootenv = {}
         # propagate from localhost
         if 'PATH' in environ:
@@ -345,7 +366,6 @@ class RootRTHandler(IRuntimeHandler):
                 logger.debug('Using a different Python - %s.', python_home)
                 python_lib = join(python_home, 'lib')
 
-                import os.path
                 if not os.path.exists(python_bin) or not os.path.exists(python_lib):
                     logger.error('The PYTHONHOME specified does not have the expected structure. See the [ROOT] section of your .gangarc file.')
                     logger.error('PYTHONPATH is: ' + str(os.path))
@@ -372,7 +392,7 @@ class RootRTHandler(IRuntimeHandler):
                 arglist.append(self.quoteCintArgString(arg))
             else:
                 arglist.append(arg)
-        rootarg = '(' + string.join([str(s) for s in arglist], ',') + ')'
+        rootarg = '\("""' + string.join([str(s) for s in arglist], ',') + '"""\)'
 
         script = app.script
         if script == File():
@@ -382,15 +402,19 @@ class RootRTHandler(IRuntimeHandler):
 
         # Start ROOT with the -b and -q options to run without a
         # terminal attached.
-        arguments = ['-b', '-q', join('.', script.subdir,
-                                      split(script.name)[1]) + rootarg]
+        arguments = ['-b', '-q', os.path.relpath(join('.', script.subdir,
+                                      split(script.name)[1])) + rootarg]
         inputsandbox = app._getParent().inputsandbox + [script]
 
         (rootenv, _) = self._getRootEnvSys(app.version)
         logger.debug("ROOT environment:\n %s: ", str(rootenv))
 
-        return StandardJobConfig('root.exe', inputsandbox, arguments,
-                                 app._getParent().outputsandbox, rootenv)
+        returnable = StandardJobConfig('root.exe', inputsandbox, arguments,
+                                 app._getParent().outputsandbox)
+
+        logger.debug("root jobconfig: %s" % str(returnable))
+
+        return returnable
 
     def _preparePyRootJobConfig(self, app, appconfig, appmasterconfig, jobmasterconfig):
         """JobConfig for executing a Root script using CINT."""
@@ -415,7 +439,7 @@ class RootRTHandler(IRuntimeHandler):
         logger.debug("PyRoot environment:\n %s: ", str(rootenv))
 
         return StandardJobConfig('python', inputsandbox, arguments,
-                                 app._getParent().outputsandbox, rootenv)
+                                 app._getParent().outputsandbox)
 
     def prepare(self, app, appconfig, appmasterconfig, jobmasterconfig):
         """The default prepare method. Used to select scripting backend."""
@@ -445,7 +469,7 @@ class RootDownloadHandler(IRuntimeHandler):
         argList = [str(s) for s in app.args]
 
         return StandardJobConfig(runScript, inputsandbox, argList,
-                                 app._getParent().outputsandbox, rootenv)
+                                 app._getParent().outputsandbox)
 
 
 class RootLCGRTHandler(IRuntimeHandler):
@@ -506,14 +530,13 @@ def downloadWrapper(app):
         arglist = []
         for arg in app.args:
             if isinstance(arg, str):
-                arglist.append('\\\\"' + arg + '\\\\"')
+                arglist.append('\\\'' + arg + '\\\'')
             else:
                 arglist.append(arg)
-        rootarg = '\(' + string.join([str(s) for s in arglist], ',') + '\)'
+        rootarg = '\(\"' + string.join([str(s) for s in arglist], ',') + '\"\)'
 
         # use root
-        commandline = '\'root.exe -b -q ' + scriptPath + \
-            rootarg + '\''
+        commandline = 'root.exe -b -q ' + scriptPath + rootarg + ''
     else:
         # use python
         pyarg = string.join([str(s) for s in app.args], ' ')
@@ -522,190 +545,15 @@ def downloadWrapper(app):
     logger.debug("Command line: %s: ", commandline)
 
     # Write a wrapper script that installs ROOT and runs script
-    wrapperscript = """#!/usr/bin/env python
-from __future__ import print_function
-'''Script to run root with cint or python.'''
-def downloadAndUnTar(fileName, url):
-    '''Downloads and untars a file with tar xfz'''
-    from shutil import copyfileobj
-    from urllib2 import urlopen
-
-    urlFileIn  = urlopen(url)
-    urlFileOut = file(fileName,'w')
-    copyfileobj(urlFileIn,urlFileOut)
-    urlFileOut.close
-    
-    status = 0
-    cmd = 'tar xzf %s' % fileName
-    
-    from commands import getstatusoutput, getoutput
-
-    #to check whether the folder name  is 'root' or 'ROOT'
-    folderName = getoutput('tar --list --file ROOT*.tar.gz').split('/')[0]
-    
-    try:#do this in try as module is only unix
-        #commmand approach removes ugly tar error
-        (status,output) = getstatusoutput(cmd)
-    except ImportError:
-        import os
-        status = os.system(cmd)
-    
-    return status, folderName
-
-def setEnvironment(key, value, update=False):
-    '''Sets an environment variable. If update=True, it preends it to
-    the current value with os.pathsep as the seperator.'''
-    from os import environ,pathsep
-    if update and environ.has_key(key):
-        value += (pathsep + environ[key])#prepend
-    environ[key] = value
-            
-def findPythonVersion(arch,rootsys):
-    '''Digs around in rootsys for config files and then greps
-    the version of python used'''
-    import os
-
-    def lookInFile(config):
-        '''Looks in the specified file for the build config
-        and picks out the python version'''
-        version = None
-        if os.path.exists(config):
-            configFile = file(config)
-            for line in configFile:#loop through the file looking for #define
-                if line.startswith('#define R__CONFIGUREOPTION'):
-                    for arg in line.split(' '):#look at value of #define
-                        if arg.startswith('PYTHONDIR'):
-                            arglist = arg.split('/')
-                            if arglist[-1] == arch:
-                                version = arglist[-2] 
-        return version
-    
-    def useRootConfig(rootsys):
-        '''Use the new root-config features to find the python version'''
-        version = None
-        root_config = os.path.join(rootsys,'bin','root-config')
-        if os.path.exists(root_config):
-            import subprocess
-            
-            args = [root_config,'--python-version']
-            
-            run = subprocess.Popen(' '.join(args), shell = True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            out, err = [ e.splitlines() for e in run.communicate() ]
-            code = run.returncode
-            if code == 0 and out and not err and len(out) == 1:
-                split = out[0].split('.')
-                if len(out) != len(split):
-                    version = '.'.join(split)
-        return version
-            
-
-    version = None
-    for f in ['config.h','RConfigure.h']:
-        version = lookInFile(os.path.join(rootsys,'include',f))
-        if version is not None:
-            break
-    if version is None:
-        version = useRootConfig(rootsys)
-    return version
-
-def greaterThanVersion(version_string, version_tuple):
-    '''Checks whether a version string is greater than a specific version'''
-    result = False
-    version_split = version_string.split('.')
-    if len(version_split) == 3:
-        try:
-            major = int(version_split[0])
-            minor = int(version_split[1])
-            if major >= version_tuple[0] and minor > version_tuple[1]:
-                result = True
-        except:
-            pass
-    return result
-            
-def findArch(version):
-    '''Method stub. In the future we might look at the
-    environment to determin the arch we are running on.'''
-    
-    #SPI achitectures changed in Root > 5.16
-    if greaterThanVersion(version, (5,16) ):
-        return 'slc4_ia32_gcc34'
-    return 'slc3_ia32_gcc323'
-    
-def findURL(version, arch):
-    
-    if greaterThanVersion(version, (5,16) ):
-        fname = 'ROOT_%s__LCG_%s.tar.gz' % (version,arch)
-    else:
-        fname = 'root_%s__LCG_%s.tar.gz' % (version,arch)
-        
-    return fname
-
-# Main
-if __name__ == '__main__':
-    
-    from os import curdir, system, environ, pathsep, sep
-    from os.path import join
-    import sys    
-
-    commandline = ###COMMANDLINE###    
-    scriptPath = '###SCRIPTPATH###'
-    usepython = ###USEPYTHON###
-
-    version = '###ROOTVERSION###'
-    arch = findArch(version)
-    fname = findURL(version,arch)
-
-    spiURL = 'http://service-spi.web.cern.ch/service-spi/external/distribution/'    
-    url = spiURL + fname
-    
-    print('Downloading ROOT version %s from %s.' % (version,url))
-    (status, folderName) = downloadAndUnTar(fname,url)
-    sys.stdout.flush()
-    sys.stderr.flush()
-        
-    #see HowtoPyroot in the root docs
-    import os 
-    pwd = os.environ['PWD']
-    rootsys=join(pwd,folderName,version,arch,'root')
-    setEnvironment('LD_LIBRARY_PATH',curdir,True)
-    setEnvironment('LD_LIBRARY_PATH',join(rootsys,'lib'),True)
-    setEnvironment('ROOTSYS',rootsys)
-    setEnvironment('PATH',join(rootsys,'bin'),True)
-
-    if usepython:
-
-        pythonVersion = findPythonVersion(arch,rootsys)
-        if not pythonVersion:
-            print('Failed to find the correct version of python to use. Exiting', file=sys.stderr)
-            sys.exit(-1)
-
-        tarFileName = 'Python_%s__LCG_%s.tar.gz' % (pythonVersion, arch)        
-        url = spiURL + tarFileName
-
-        print('Downloading Python version %s from %s.' % (pythonVersion,url))
-        downloadAndUnTar(tarFileName,url)
-
-        pythonDir = join('.','Python',pythonVersion,arch)
-        pythonCmd = join(pythonDir,'bin','python')
-        commandline = commandline % {'PYTHONCMD':pythonCmd}
-
-        setEnvironment('LD_LIBRARY_PATH',join(pythonDir,'lib'),True)
-        setEnvironment('PYTHONDIR',pythonDir)
-        setEnvironment('PYTHONPATH',join(rootsys,'lib'),True)
-
-    #exec the script
-    print('Executing ',commandline)
-    sys.stdout.flush()
-    sys.stderr.flush()
-    sys.exit(system(commandline)>>8)
-
-"""
+    script_location = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))),
+                                                   'wrapperScriptTemplate.py')
+    from Ganga.GPIDev.Lib.File import FileUtils
+    wrapperscript = FileUtils.loadScript(script_location, '')
 
     wrapperscript = wrapperscript.replace('###COMMANDLINE###', commandline)
     wrapperscript = wrapperscript.replace('###ROOTVERSION###', app.version)
     wrapperscript = wrapperscript.replace('###SCRIPTPATH###', scriptPath)
-    wrapperscript = wrapperscript.replace(
-        '###USEPYTHON###', str(app.usepython))
+    wrapperscript = wrapperscript.replace('###USEPYTHON###', str(app.usepython))
 
     logger.debug('Script to run on worker node\n' + wrapperscript)
     scriptName = "rootwrapper_generated_%s.py" % randomString()
@@ -716,58 +564,30 @@ if __name__ == '__main__':
 
 
 def defaultScript():
-    import tempfile
-    import os
     tmpdir = tempfile.mktemp()
     os.mkdir(tmpdir)
     fname = os.path.join(tmpdir, 'test.C')
+    script_location = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))),
+                                   'defaultRootScript.C')
+    from Ganga.GPIDev.Lib.File import FileUtils
+    script = FileUtils.loadScript(script_location, '')
     with open(fname, 'w') as f:
-        f.write("""
-        void test() {
-            cout << "Hello World from ROOT" << endl;
-            cout << "Load Path : " << gSystem->GetDynamicPath() << endl;
-            gSystem->Load("libTree");
-            gSystem->Exit(0);
-        }
-        """)
+        f.write(script)
     return fname
 
 
 def defaultPyRootScript():
-    import tempfile
-    import os
     tmpdir = tempfile.mktemp()
     os.mkdir(tmpdir)
     fname = os.path.join(tmpdir, 'test.py')
+    script_location = os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))),
+                                   'defaultPyRootScript.py')
+
+    from Ganga.GPIDev.Lib.File import FileUtils
+    default_script = FileUtils.loadScript(script_location, '')
+
     with open(fname, 'w') as f:
-        f.write("""#!/usr/bin/env python
-from __future__ import print_function
-class Main(object):
-    def run(self):
-        '''Prints out some PyRoot debug info.'''
-        print('Hello from PyRoot. Importing ROOT...')
-        import ROOT
-        print('Root Load Path', ROOT.gSystem.GetDynamicPath())
-
-        from os.path import pathsep
-        import string
-        import sys
-        
-        print('Python Load Path', string.join([str(s) for s in sys.path],pathsep))
-
-        print('Loading libTree:', ROOT.gSystem.Load('libTree'))
-
-        print('Goodbye...')
-
-if __name__ == '__main__':
-
-    m = Main()
-    m.run()
-    
-    import sys
-    sys.exit(0)
-    
-    """)
+        f.write(default_script)
     return fname
 
 

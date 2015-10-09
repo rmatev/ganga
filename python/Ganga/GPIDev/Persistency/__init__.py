@@ -18,7 +18,8 @@ __version__ = "1.0"
 
 import Ganga.GPI
 from Ganga.Utility.Runtime import getScriptPath, getSearchPath
-from Ganga.GPIDev.Base.Proxy import stripProxy
+from Ganga.GPIDev.Base.Proxy import stripProxy, isType
+from Ganga.GPIDev.Lib.Registry.RegistrySlice import RegistrySlice
 from Ganga.GPIDev.Lib.Registry.RegistrySliceProxy import RegistrySliceProxy
 import Ganga.Utility.logging
 import os
@@ -87,11 +88,11 @@ def stripped_export(item=None, filename="", mode="w"):
         return returnValue
 
     if isinstance(item, list):
-        objectList = item
+        objectList = [stripProxy(element) for element in item]
     elif isinstance(item, tuple):
-        objectList = item
-    elif isinstance(item, RegistrySliceProxy):
-        objectList = stripProxy(item)
+        objectList = [stripProxy(element) for element in item]
+    elif isType(item, RegistrySliceProxy) or isType(item, RegistrySlice):
+        objectList = [stripProxy(element) for element in item]
     else:
         objectList = [item]
 
@@ -168,6 +169,8 @@ def load(filename="", returnList=True):
                      of argument returnList
     """
 
+    #logger.info("Loading: %s" % str(filename))
+
     if returnList:
         returnValue = []
     else:
@@ -200,8 +203,8 @@ def load(filename="", returnList=True):
         item = item.strip()
         if item:
             try:
-                object = eval(str(item), Ganga.GPI.__dict__)
-                objectList.append(object)
+                this_object = eval(str(item), Ganga.GPI.__dict__)
+                objectList.append(this_object)
             except NameError as x:
                 logger.exception(x)
                 logger.warning("Unable to load object with definition %s" % item)

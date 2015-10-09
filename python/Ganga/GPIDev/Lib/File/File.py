@@ -7,7 +7,6 @@
 from Ganga.GPIDev.Base import GangaObject
 from Ganga.GPIDev.Schema import Schema, Version, SimpleItem
 from Ganga.GPIDev.Base.Proxy import isType
-from Ganga.Core.GangaRepository import getRegistry
 from Ganga.GPIDev.Base.Proxy import stripProxy, GPIProxyObjectFactory
 import os
 import shutil
@@ -16,6 +15,18 @@ import uuid
 from Ganga.Utility.files import expandfilename, chmod_executable, is_executable
 
 from Ganga.Utility.logging import getLogger
+
+from Ganga.GPIDev.Base.Filters import allComponentFilters
+
+import re
+
+import Ganga.Utility.Config
+
+from Ganga.GPIDev.Lib.File import getSharedPath
+
+# regex [[PROTOCOL:][SETYPE:]..[<alfanumeric>:][/]]/filename
+urlprefix = re.compile('^(([a-zA-Z_][\w]*:)+/?)?/')
+
 logger = getLogger()
 
 
@@ -105,15 +116,7 @@ class File(GangaObject):
 
 # add File objects to the configuration scope (i.e. it will be possible to
 # write instatiate File() objects via config file)
-import Ganga.Utility.Config
 Ganga.Utility.Config.config_scope['File'] = File
-
-from Ganga.GPIDev.Base.Filters import allComponentFilters
-
-import re
-# regex [[PROTOCOL:][SETYPE:]..[<alfanumeric>:][/]]/filename
-urlprefix = re.compile('^(([a-zA-Z_][\w]*:)+/?)?/')
-
 
 def string_file_shortcut_file(v, item):
     if isinstance(v, str):
@@ -123,9 +126,6 @@ def string_file_shortcut_file(v, item):
     return None
 
 allComponentFilters['files'] = string_file_shortcut_file
-
-from Ganga.GPIDev.Lib.File import getSharedPath
-
 
 class ShareDir(GangaObject):
 
@@ -184,28 +184,23 @@ class ShareDir(GangaObject):
 #            self.add(self.addfile)
 
     def add(self, input):
+        from Ganga.Core.GangaRepository import getRegistry
         if not isType(input, list):
             input = [input]
         for item in input:
             if isType(item, str):
                 if os.path.isfile(expandfilename(item)):
-                    logger.info(
-                        'Copying file %s to shared directory %s' % (item, self.name))
-                    shutil.copy2(
-                        expandfilename(item), os.path.join(getSharedPath(), self.name))
-                    shareref = GPIProxyObjectFactory(
-                        getRegistry("prep").getShareRef())
+                    logger.info('Copying file %s to shared directory %s' % (item, self.name))
+                    shutil.copy2(expandfilename(item), os.path.join(getSharedPath(), self.name))
+                    shareref = GPIProxyObjectFactory(getRegistry("prep").getShareRef())
                     shareref.increase(self.name)
                     shareref.decrease(self.name)
                 else:
                     logger.error('File %s not found' % expandfilename(item))
             elif isType(item, File) and item.name is not '' and os.path.isfile(expandfilename(item.name)):
-                logger.info(
-                    'Copying file object %s to shared directory %s' % (item.name, self.name))
-                shutil.copy2(
-                    expandfilename(item.name), os.path.join(getSharedPath(), self.name))
-                shareref = GPIProxyObjectFactory(
-                    getRegistry("prep").getShareRef())
+                logger.info('Copying file object %s to shared directory %s' % (item.name, self.name))
+                shutil.copy2(expandfilename(item.name), os.path.join(getSharedPath(), self.name))
+                shareref = GPIProxyObjectFactory(getRegistry("prep").getShareRef())
                 shareref.increase(self.name)
                 shareref.decrease(self.name)
             else:
@@ -259,15 +254,7 @@ class ShareDir(GangaObject):
         file are checked"""
         return self.executable or is_executable(expandfilename(self.name))
 
-import Ganga.Utility.Config
 Ganga.Utility.Config.config_scope['ShareDir'] = ShareDir
-
-from Ganga.GPIDev.Base.Filters import allComponentFilters
-
-import re
-# regex [[PROTOCOL:][SETYPE:]..[<alfanumeric>:][/]]/filename
-urlprefix = re.compile('^(([a-zA-Z_][\w]*:)+/?)?/')
-
 
 def string_sharedfile_shortcut(v, item):
     if isinstance(v, str):

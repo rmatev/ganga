@@ -13,7 +13,7 @@ from __future__ import absolute_import
 def to_file(j, f=None, ignore_subs=''):
     vstreamer = VStreamer(out=f, selection=ignore_subs)
     vstreamer.begin_root()
-    j.accept(vstreamer)
+    stripProxy(j).accept(vstreamer)
     vstreamer.end_root()
 
 # Faster, but experimental version of to_file without accept()
@@ -108,7 +108,7 @@ class VStreamer(object):
     def __init__(self, out=None, selection=''):
         self.level = 0
         self.selection = selection
-        if out:
+        if out is not None:
             self.out = out
         else:
             import sys
@@ -126,8 +126,7 @@ class VStreamer(object):
     def nodeBegin(self, node):
         self.level += 1
         s = node._schema
-        print(self.indent(), '<class name="%s" version="%d.%d" category="%s">' % (
-            s.name, s.version.major, s.version.minor, s.category), file=self.out)
+        print(self.indent(), '<class name="%s" version="%d.%d" category="%s">' % (s.name, s.version.major, s.version.minor, s.category), file=self.out)
 
     def nodeEnd(self, node):
         print(self.indent(), '</class>', file=self.out)
@@ -167,36 +166,17 @@ class VStreamer(object):
             self.level -= 1
 
     def sharedAttribute(self, node, name, value, sequence):
-        if self.showAttribute(node, name):
-            self.level += 1
-            print(self.indent(), end=' ', file=self.out)
-            print('<attribute name="%s">' % name, end=' ', file=self.out)
-            if sequence:
-                self.level += 1
-                print(file=self.out)
-                print(self.indent(), '<sequence>', file=self.out)
-                for v in value:
-                    self.level += 1
-                    print(self.indent(), end=' ', file=self.out)
-                    self.print_value(v)
-                    print(file=self.out)
-                    self.level -= 1
-                print(self.indent(), '</sequence>', file=self.out)
-                self.level -= 1
-                print(self.indent(), '</attribute>', file=self.out)
-            else:
-                self.level += 1
-                self.print_value(value)
-                self.level -= 1
-                print('</attribute>', file=self.out)
-            self.level -= 1
+        self.simpleAttribute(node, name, value, sequence)
 
     def acceptOptional(self, s):
         self.level += 1
         if s is None:
             print(self.indent(), '<value>None</value>', file=self.out)
         else:
-            s.accept(self)
+            if type(s) == type(''):
+                print(self.indent(), '<value>%s</value>' % s, file=self.out)
+            else:
+                stripProxy(s).accept(self)
         self.level -= 1
 
     def componentAttribute(self, node, name, subnode, sequence):

@@ -33,44 +33,35 @@ def isProxy(obj):
     if isclass(obj):
         return issubclass(obj, GPIProxyObject) or hasattr(obj, proxyRef)
     else:
-        return issubclass(obj.__class__, GPIProxyObject) or hasattr(obj.__class__, proxyRef)
+        obj_class = obj.__class__
+        return issubclass(obj_class, GPIProxyObject) or hasattr(obj_class, proxyRef)
 
 def isType(_obj, type_or_seq):
     """Checks whether on object is of the specified type, stripping proxies as needed."""
 
-    ## This isclass check appears to be needed for GangaList and maybe others!!! rcurrie
-    ## If this is taken out then the GangaList class needs to be fixed as do others!!!
+    obj = stripProxy(_obj)
 
-    if isclass(_obj):
-        try:
-            obj = stripProxy(_obj.__class__)
-        except:
-            obj = stripProxy(_obj)
-    else:
-        obj = stripProxy(_obj)
+    bare_type_or_seq = stripProxy(type_or_seq)
 
-    if isinstance(type_or_seq, (tuple, list)):
+    ## Here to avoid circular GangaObject dependencies
+    from Ganga.GPIDev.Lib.GangaList import GangaList
+    ## is type_or_seq iterable?
+    if isinstance(type_or_seq, (tuple, list)) or\
+            (isinstance(bare_type_or_seq, GangaList.GangaList) and (bare_type_or_seq != GangaList.GangaList)):
         clean_list = []
         for type_obj in type_or_seq:
-            if type(type_obj) != type(type('')) and type_obj != type(''):
-                if isclass(type_obj):
-                    try:
-                        clean_list.append(stripProxy(type_obj.__class__))
-                    except:
-                        clean_list.append(type(stripProxy(type_obj)))
-                else:
-                    clean_list.append(type(stripProxy(type_obj)))
+            str_type = type('')
+            if (not isclass(type_obj)) and (type(type_obj) != type(str_type) and type_obj != str_type):
+                clean_list.append(type(stripProxy(type_obj)))
+            elif isclass(type_obj):
+                clean_list.append(type_obj)
             else:
                 clean_list.append(type_obj)
+
         return isinstance(obj, tuple(clean_list))
+
     else:
-        if isclass(type_or_seq):
-            try:
-                return isinstance(obj, stripProxy(type_of_seq.__class__))
-            except:
-                return isinstance(obj, stripProxy(type_or_seq))
-        else:
-            return isinstance(obj, stripProxy(type_or_seq))
+        return isinstance(obj, bare_type_or_seq)
 
 def stripProxy(obj):
     """Removes the proxy if there is one"""
@@ -291,7 +282,7 @@ class ProxyDataDescriptor(object):
         if item['sequence']:
             # we need to explicitly check for the list type, because simple
             # values (such as strings) may be iterable
-            if isType(val, (GangaList, list, type([]))):
+            if isType(val, [GangaList, list, type([])]):
                 # create GangaList
                 val = makeGangaList(val, stripper)
             else:
@@ -378,7 +369,9 @@ def GPIProxyClassFactory(name, pluginclass):
         # at the object level _impl is a ganga plugin object
         self.__dict__[proxyRef] = pluginclass()
 
-        getattr(self, proxyRef).__construct__(map(stripProxy, args))
+        clean_args = [stripProxy(arg) for arg in args]
+
+        getattr(self, proxyRef).__construct__(tuple(clean_args))
 
         # initialize all properties from keywords of the constructor
         for k in kwds:
@@ -421,16 +414,18 @@ def GPIProxyClassFactory(name, pluginclass):
         return str(sio.getvalue()).rstrip()
     helptext(_str, """Return a printable string representing %(classname)s object as a tree of properties.""")
 
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('proxy object...')
+            return
+        p.text(self._display(True))
+    helptext(_repr_pretty_, """Return a nice string to be printed in the IPython termial""")
+
     def _repr(self):
         if hasattr(getattr(self, proxyRef), '_repr'):
             return getattr(self, proxyRef)._repr()
         else:
             return '<' + repr(getattr(self, proxyRef)) + ' PROXY at ' + hex(abs(id(self))) + '>'
-        #try:
-        #    return self._impl._repr()
-        #except AttributeError, err:
-        #    logger.debug("_repr Exception: %s" % str(err))
-        #    return '<' + repr(self._impl) + ' PROXY at ' + hex(abs(id(self))) + '>'
     helptext(_repr, "Return an short representation of %(classname)s object.")
 
     def _eq(self, x):
@@ -557,12 +552,7 @@ Setting a [protected] or a unexisting property raises AttributeError.""")
             not dict(pluginclass._schema.allItems())[name]['hidden']:
             return addProxy(pluginclass._attribute_filter__get__(name))
         else:
-            try:
-                return object.__getattribute__(self, name)
-            except AttributeError as x:
-                #logger.debug("Attribute: %s NOT found for object %s" % (name, str(self)))
-                #raise GangaAttributeError("%s" % str(x))
-                raise
+            return object.__getattribute__(self, name)
 
     # but at the class level _impl is a ganga plugin class
     d = {proxyRef: pluginclass,
@@ -577,6 +567,9 @@ Setting a [protected] or a unexisting property raises AttributeError.""")
          #          '__getattr__': _getattr,
          '__getattribute__': _getattribute
          }
+
+    if hasattr(pluginclass, '_repr_pretty_'):
+        d['_repr_pretty_'] = _repr_pretty_
 
     # TODO: this makes GangaList inherit from the list
     # this is not tested and specifically the TestGangaList/testAllListMethodsExported should be verified

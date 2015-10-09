@@ -28,8 +28,7 @@ def makeGangaList(_list, mapfunction=None, parent=None, preparable=False):
     if mapfunction is not None:
         _list = map(mapfunction, _list)
 
-    result = GangaList()
-    result.extend(_list)
+    result = makeGangaListByRef(_list)
 
     result._is_preparable = preparable
 
@@ -38,8 +37,9 @@ def makeGangaList(_list, mapfunction=None, parent=None, preparable=False):
         result._setParent(parent)
 
         for r in result:
-            if isinstance(r, GangaObject) and r._getParent() is None:
-                r._setParent(parent)
+            bare_r = stripProxy(r)
+            if isType(bare_r, GangaObject) and bare_r._getParent() is None:
+                bare_r._setParent(parent)
 
     return result
 
@@ -55,7 +55,10 @@ def stripGangaList(_list):
 def makeGangaListByRef(_list):
     """Faster version of makeGangaList. Does not make a copy of _list but use it by reference."""
     result = GangaList()
-    result._list = _list
+    _bare_list = []
+    for element in _list:
+        _bare_list.append(stripProxy(element))
+    result._list = _bare_list
     return result
 
 
@@ -134,20 +137,20 @@ class GangaList(GangaObject):
                 raise TypeMismatchError('%s is not of type %s.' % (str(obj), category))
             return filter_obj
 
-        obj = stripProxy(obj)
+        raw_obj = stripProxy(obj)
         # apply a filter if possible
         if filter:
             parent = self._getParent()
             item = self.findSchemaParentSchemaEntry(parent)
             if item and item.isA(ComponentItem):  # only filter ComponentItems
                 category = item['category']
-                if isType(obj, GangaObject):
-                    if obj._category != category:
-                        obj = applyFilter(obj, item)
-                    obj._setParent(parent)
+                if isType(raw_obj, GangaObject):
+                    if raw_obj._category != category:
+                        raw_obj = applyFilter(raw_obj, item)
+                    raw_obj._setParent(parent)
                 else:
-                    obj = applyFilter(obj, item)
-        return obj
+                    raw_obj = applyFilter(raw_obj, item)
+        return raw_obj
 
     def strip_proxy_list(self, obj_list, filter=False):
 
@@ -362,8 +365,8 @@ class GangaList(GangaObject):
     def __str__(self):
         return self.__repr__()
 
-    def append(self, obj):
-        self._list.append(self.strip_proxy(obj, True))
+    def append(self, obj, my_filter=True):
+        self._list.append(self.strip_proxy(obj, my_filter))
 
     def _export_append(self, obj):
         self.checkReadOnly()
@@ -465,7 +468,19 @@ class GangaList(GangaObject):
 
     def toString(self):
         """Returns a simple str of the _list."""
-        return str(self._list)
+        returnable_str = "["
+        for element in self._list:
+            if isType( element, GangaObject):
+                returnable_str += repr(stripProxy(element))
+            else:
+                returnable_str += "'"
+                returnable_str += str(stripProxy(element))
+                returnable_str += "'"
+            returnable_str += ", "
+        returnable_str += "]"
+        return returnable_str
+
 
 from Ganga.Runtime.GPIexport import exportToGPI
 exportToGPI('GangaList', GangaList, 'Classes')
+

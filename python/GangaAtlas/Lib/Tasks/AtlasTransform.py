@@ -15,6 +15,7 @@ from dq2.container.exceptions import DQContainerAlreadyHasDataset, DQContainerDo
 from GangaAtlas.Lib.ATLASDataset.DQ2Dataset import dq2_lock, dq2
 from dq2.common.DQException import DQException
 from Ganga.GPIDev.Schema import *
+from Ganga.GPIDev.Base.Proxy import addProxy, stripProxy
 import Ganga.GPI as GPI
 import os
 
@@ -213,8 +214,24 @@ class AtlasTransform(ITransform):
                  len(GPI.jobs(parent.active_job_ids[0]).outputdata.datasetList) == 0):
             return None
 
+         # for local jobs, make sure units are complete
+         if GPI.jobs(parent_units[0].active_job_ids[0]).outputdata._impl._name == "ATLASOutputDataset" and \
+                parent.status != "completed":
+            return None
+                
+
+      # Are we doing Local -> Local? i.e. are we going from ATLASOutputDataset?
+      # Problem: Doesn't take into account merger locations...
+      if GPI.jobs(parent_units[0].active_job_ids[0]).outputdata._impl._name == "ATLASOutputDataset":
+         unit = AtlasUnit()
+         unit.inputdata = ATLASLocalDataset()
+
+         for parent in parent_units:
+            for l in GPI.jobs(parent.active_job_ids[0]).outputdata.output:
+               unit.inputdata.names += l
+            
       # should we use the copy_output (ie. local output). Special case for TagPrepare
-      if GPI.jobs(parent_units[0].active_job_ids[0]).application._impl._name == "TagPrepare":
+      elif GPI.jobs(parent_units[0].active_job_ids[0]).application._impl._name == "TagPrepare":
          
          # make sure all have completed before taking the tag-info
          if parent_units[0].status != "completed":

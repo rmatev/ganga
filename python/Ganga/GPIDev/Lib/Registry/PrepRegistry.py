@@ -193,7 +193,7 @@ class ShareRef(GangaObject):
 
             if run_unp is not None and unprepare is True:
                 logger.info('Unpreparing %s repository object #%s associated with ShareDir %s',
-                            item.values()[0],  stripPRoxy(item.keys()[0])._registry_id, sharedir)
+                            item.values()[0],  stripProxy(item.keys()[0])._registry_id, sharedir)
 #                stripProxy(item.keys()[0]).unprepare()
                 run_unp.unprepare()
                 run_unp = None
@@ -486,6 +486,12 @@ class ShareRef(GangaObject):
             disp_string = "No objects stored in the shared directory."
 
         return disp_string
+
+    def _repr_pretty_(self, p, cycle):
+        if cycle:
+            p.text('prep registry...')
+            return
+        p.text(self._display(interactive=True))
 
     # rcurrie Adding this due to strange bug but assuming it should be false
     # due to setRegistry(None)

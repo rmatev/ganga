@@ -4,6 +4,9 @@ import tempfile
 import copy
 
 from Ganga.Utility.Config import getConfig
+from Ganga.GPIDev.Lib.File import FileUtils
+
+from Ganga.GPIDev.Base.Proxy import stripProxy
 
 """
 Checks if the output files of a given job(we are interested in the backend) 
@@ -12,9 +15,9 @@ should be postprocessed on the WN, depending on job.backend_output_postprocess d
 
 
 def outputFilePostProcessingOnWN(job, outputFileClassName):
-    backendClassName = job.backend.__class__.__name__
+    backendClassName = stripProxy(job.backend).__class__.__name__
 
-    backend_output_postprocess = job.getBackendOutputPostprocessDict()
+    backend_output_postprocess = stripProxy(job).getBackendOutputPostprocessDict()
     if backendClassName in backend_output_postprocess:
         if outputFileClassName in backend_output_postprocess[backendClassName]:
             if backend_output_postprocess[backendClassName][outputFileClassName] == 'WN':
@@ -30,9 +33,9 @@ should be postprocessed on the client, depending on job.backend_output_postproce
 
 
 def outputFilePostProcessingOnClient(job, outputFileClassName):
-    backendClassName = job.backend.__class__.__name__
+    backendClassName = stripProxy(job.backend).__class__.__name__
 
-    backend_output_postprocess = job.getBackendOutputPostprocessDict()
+    backend_output_postprocess = stripProxy(job).getBackendOutputPostprocessDict()
     if backendClassName in backend_output_postprocess:
         if outputFileClassName in backend_output_postprocess[backendClassName]:
             if backend_output_postprocess[backendClassName][outputFileClassName] == 'client':
@@ -56,7 +59,7 @@ def getOutputSandboxPatterns(job):
 
         for outputFile in job.outputfiles:
 
-            outputFileClassName = outputFile.__class__.__name__
+            outputFileClassName = stripProxy(outputFile).__class__.__name__
 
             if outputFilePostProcessingOnClient(job, outputFileClassName) or outputFileClassName == 'LocalFile':
                 if outputFile.namePattern not in outputPatterns:
@@ -85,7 +88,7 @@ def getInputFilesPatterns(job):
 
     for inputFile in inputfiles_list:
 
-        inputFileClassName = inputFile.__class__.__name__
+        inputFileClassName = stripProxy(inputFile).__class__.__name__
 
         if inputFileClassName == 'LocalFile':
             for currentFile in glob.glob(os.path.join(inputFile.localDir, inputFile.namePattern)):
@@ -117,7 +120,7 @@ def getOutputSandboxPatternsForInteractive(job):
 
     for outputFile in job.outputfiles:
 
-        outputFileClassName = outputFile.__class__.__name__
+        outputFileClassName = stripProxy(outputFile).__class__.__name__
 
         if outputFileClassName == 'LocalFile' or (outputFileClassName != 'LocalFile' and outputFilePostProcessingOnClient(job, outputFileClassName)):
             if outputFile.compressed:
@@ -146,7 +149,7 @@ def getWNCodeForOutputSandbox(job, files, jobid):
 
         for outputFile in job.outputfiles:
 
-            outputFileClassName = outputFile.__class__.__name__
+            outputFileClassName = stripProxy(outputFile).__class__.__name__
 
             if outputFileClassName == 'LocalFile' or (outputFileClassName != 'LocalFile' and outputFilePostProcessingOnClient(job, outputFileClassName)):
                 patternsToSandbox.append(outputFile.namePattern)
@@ -183,10 +186,8 @@ for fn in final_list_to_copy:
         print('ERROR: (job'+###JOBID###+')',x)
 """
     insertScript = insertScript.replace('###FILES###', str(files))
-    insertScript = insertScript.replace(
-        '###PATTERNSTOSANDBOX###', str(patternsToSandbox))
-    insertScript = insertScript.replace(
-        '###PATTERNSTOZIP###', str(patternsToZip))
+    insertScript = insertScript.replace('###PATTERNSTOSANDBOX###', str(patternsToSandbox))
+    insertScript = insertScript.replace('###PATTERNSTOZIP###', str(patternsToZip))
     insertScript = insertScript.replace('###JOBID###', jobid)
 
     return insertScript
@@ -196,6 +197,7 @@ def getWNCodeForDownloadingInputFiles(job, indent):
     """
     Generate the code to be run on the WN to download input files
     """
+
     if len(job.inputfiles) == 0 and (not job.inputdata or job.inputdata._name != "GangaDataset" or not job.inputdata.treat_as_inputfiles):
         return ""
 
@@ -206,29 +208,32 @@ def getWNCodeForDownloadingInputFiles(job, indent):
     # The LocalFiles in inputfiles have already been dealt with
     if job.inputdata and job.inputdata._name == "GangaDataset" and job.inputdata.treat_as_inputfiles:
         for inputFile in job.inputdata.files:
-            inputfileClassName = inputFile.__class__.__name__
+            inputfileClassName = stripProxy(inputFile).__class__.__name__
 
             if inputfileClassName == "LocalFile":
 
                 # special case for LocalFile
-                if job.backend.__class__.__name__ in ['Localhost', 'Batch', 'LSF', 'Condor', 'PBS']:
+                if stripProxy(job.backend).__class__.__name__ in ['Localhost', 'Batch', 'LSF', 'Condor', 'PBS']:
                     # create symlink
-                    insertScript += """
-###INDENT#### create symbolic links for LocalFiles
-###INDENT###for f in ###FILELIST###:
-###INDENT###   os.symlink(f, os.path.basename(f)) 
+                    shortScript += """
+# create symbolic links for LocalFiles
+for f in ###FILELIST###:
+   os.symlink(f, os.path.basename(f)) 
 """
-                    insertScript = insertScript.replace(
-                        '###FILELIST###', "%s" % inputFile.getFilenameList())
+                    shortScript = FileUtils.indentScript(shortScript, '###INDENT####')
+
+                    insertScript += shortScript
+
+                    insertScript = insertScript.replace('###FILELIST###', "%s" % inputFile.getFilenameList())
 
     # if GangaDataset is used, check if they want the inputfiles transferred
-    inputfiles_list = copy.deepcopy(job.inputfiles)
+    inputfiles_list = job.inputfiles
     if job.inputdata and job.inputdata._name == "GangaDataset" and job.inputdata.treat_as_inputfiles:
         inputfiles_list += job.inputdata.files
 
     for inputFile in inputfiles_list:
 
-        inputfileClassName = inputFile.__class__.__name__
+        inputfileClassName = stripProxy(inputFile).__class__.__name__
 
         if outputFilePostProcessingOnWN(job, inputfileClassName):
             inputFile.processWildcardMatches()
@@ -255,8 +260,8 @@ def getWNCodeForOutputPostprocessing(job, indent):
     else:
         for outputFile in job.outputfiles:
 
-            outputfileClassName = outputFile.__class__.__name__
-            backendClassName = job.backend.__class__.__name__
+            outputfileClassName = stripProxy(outputFile).__class__.__name__
+            backendClassName = stripProxy(job.backend).__class__.__name__
 
             if outputFile.compressed:
                 if outputfileClassName == 'LocalFile' and backendClassName not in ['Localhost', 'LSF', 'Interactive']:
@@ -273,26 +278,27 @@ def getWNCodeForOutputPostprocessing(job, indent):
                 outputFilesProcessedOnWN[
                     outputfileClassName].append(outputFile)
 
-    insertScript = """\n
-###INDENT###import os, glob
-###INDENT###for patternToZip in ###PATTERNSTOZIP###:
-###INDENT###    for currentFile in glob.glob(os.path.join(os.getcwd(),patternToZip)):
-###INDENT###        os.system("gzip %s" % currentFile)
+    shortScript = """\n
+import os, glob
+for patternToZip in ###PATTERNSTOZIP###:
+    for currentFile in glob.glob(os.path.join(os.getcwd(),patternToZip)):
+        os.system("gzip %s" % currentFile)
 
-###INDENT###postprocesslocations = file(os.path.join(os.getcwd(), '###POSTPROCESSLOCATIONSFILENAME###'), 'w')  
+postprocesslocations = file(os.path.join(os.getcwd(), '###POSTPROCESSLOCATIONSFILENAME###'), 'w')  
 """
 
-    insertScript = insertScript.replace(
-        '###PATTERNSTOZIP###', str(patternsToZip))
-    insertScript = insertScript.replace('###POSTPROCESSLOCATIONSFILENAME###', getConfig(
-        'Output')['PostProcessLocationsFileName'])
+    shortScript = FileUtils.indentScript(shortScript, '###INDENT###')
+
+    insertScript = shortScript
+
+    insertScript = insertScript.replace('###PATTERNSTOZIP###', str(patternsToZip))
+    insertScript = insertScript.replace('###POSTPROCESSLOCATIONSFILENAME###', getConfig('Output')['PostProcessLocationsFileName'])
 
     for outputFileName in outputFilesProcessedOnWN.keys():
 
         if len(outputFilesProcessedOnWN[outputFileName]) > 0:
 
-            insertScript += outputFilesProcessedOnWN[outputFileName][0].getWNInjectedScript(
-                outputFilesProcessedOnWN[outputFileName], indent, patternsToZip, 'postprocesslocations')
+            insertScript += outputFilesProcessedOnWN[outputFileName][0].getWNInjectedScript(outputFilesProcessedOnWN[outputFileName], indent, patternsToZip, 'postprocesslocations')
 
     insertScript += """\n
 ###INDENT###postprocesslocations.close()
@@ -340,3 +346,4 @@ def getWNCodeForInputdataListCreation(job, indent):
         insertScript = insertScript.replace('###FILELIST###', "[]")
 
     return insertScript
+

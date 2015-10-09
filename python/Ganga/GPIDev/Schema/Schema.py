@@ -6,10 +6,30 @@ from __future__ import absolute_import
 ##########################################################################
 
 import Ganga.Utility.logging
-logger = Ganga.Utility.logging.getLogger()
+
+import copy
 
 from Ganga.Utility.logic import implies
 
+import Ganga.Utility.Config
+
+from Ganga.Core.exceptions import GangaAttributeError
+
+from Ganga.Utility.Plugin import allPlugins
+
+import types
+
+#from . import Schema
+
+from Ganga.Core import GangaAttributeError, TypeMismatchError, SchemaError
+
+from Ganga.GPIDev.TypeCheck import _valueTypeAllowed
+
+logger = Ganga.Utility.logging.getLogger()
+
+## Dictionary for storing data from the Config system which takes a while to lookup
+_found_configs = {}
+_found_attrs = {}
 
 #
 # Ganga Public Interface Schema
@@ -69,22 +89,21 @@ class Schema(object):
     # Ganga will automatically set a reference to the plugin class which corresponds to this schema, hence
     # defining the schema's name and category.
     #
-    # datadict: dictionary of properties (schema items)
+    # datadict: dictionary of properties (schema items) Defaults to '{}'
     # version: the version information
 
-    def __init__(self, version, datadict):
-        self.datadict = datadict
+    def __init__(self, version, datadict=None):
+        self.datadict = datadict or {}
         self.version = version
         self._pluginclass = None
 
     def __getitem__(self, name):
-        try:
+        if name in self.datadict:
             return self.datadict[name]
-        except Exception as x:
-            logger.error("Ganga Cannot find: %s in Object: %s" %
-                         (name, self.name))
-            from Ganga.Core.exceptions import GangaAttributeError
-            raise GangaAttributeError(x)
+        else:
+            err_str = "Ganga Cannot find: %s in Object: %s" % (name, self.name)
+            logger.error(err_str)
+            raise GangaAttributeError(err_str)
 
     category = property(lambda self: self._pluginclass._category)
     name = property(lambda self: self._pluginclass._name)
@@ -136,15 +155,14 @@ class Schema(object):
 
     # make a schema copy for a derived class, does not copy the pluginclass
     def inherit_copy(self):
-        import copy
         return Schema(copy.deepcopy(self.version), copy.deepcopy(self.datadict))
 
     def createDefaultConfig(self):
-        import Ganga.Utility.Config
         # create a configuration unit for default values of object properties
         # take the defaults from schema defaults
-        config = Ganga.Utility.Config.makeConfig(defaultConfigSectionName(
-            self.name), "default attribute values for %s objects" % self.name)  # self._pluginclass._proxyClass.__doc__ )
+        config = Ganga.Utility.Config.makeConfig(defaultConfigSectionName(self.name),\
+                                                "default attribute values for %s objects" % self.name)
+                                                # self._pluginclass._proxyClass.__doc__ )
 
         for name, item in self.allItems():
             # and not item['sequence']: #FIXME: do we need it or not??
@@ -168,30 +186,28 @@ class Schema(object):
                     name, item['defvalue'], item['doc'], override=False, typelist=types)
 
         def prehook(name, x):
-            errmsg = "Cannot set %s=%s in [%s]: " % (
-                name, repr(x), config.name)
+            errmsg = "Cannot set %s=%s in [%s]: " % (name, repr(x), config.name)
 
             try:
                 item = self.getItem(name)
-            except KeyError as x:
-                raise Ganga.Utility.Config.ConfigError(
-                    errmsg + "attribute not defined in the schema")
+            #except KeyError as x:
+            #    raise Ganga.Utility.Config.ConfigError(errmsg + "attribute not defined in the schema")
             except Exception as x:
                 raise Ganga.Utility.Config.ConfigError(errmsg + str(x))
 
             if item.isA(ComponentItem):
                 if not isinstance(x, str) and not x is None:
-                    raise Ganga.Utility.Config.ConfigError(
-                        errmsg + "only strings and None allowed as a default value of Component Item.")
+                    raise Ganga.Utility.Config.ConfigError(errmsg + "only strings and None allowed as a default value of Component Item.")
                 try:
                     self._getDefaultValueInternal(name, x, check=True)
-                except:
-                    Ganga.Utility.logging.log_unknown_exception()
-                    raise Ganga.Utility.Config.ConfigError(errmsg + str(x))
+                except Exception as err:
+                    logger.info("Unexpected error: %s" % str(err))
+                    raise
+                    #Ganga.Utility.logging.log_unknown_exception()
+                    #raise Ganga.Utility.Config.ConfigError(errmsg + str(x))
 
             if item['protected'] or item['hidden']:
-                raise Ganga.Utility.Config.ConfigError(
-                    errmsg + "protected or hidden property")
+                raise Ganga.Utility.Config.ConfigError(errmsg + "protected or hidden property")
 
             # FIXME: File() == 'x' triggers AttributeError
             # try:
@@ -204,6 +220,7 @@ class Schema(object):
         config.attachUserHandler(prehook, None)
         config.attachSessionHandler(prehook, None)
 
+
     def getDefaultValue(self, attr):
         """ Get the default value of a schema item, both simple and component.
         """
@@ -213,29 +230,32 @@ class Schema(object):
         """ Get the default value of a schema item, both simple and component.
         If check is True then val is used instead of default value: this is used to check if the val may be used as a default value (e.g. if it is OK to use it as a value in the config file)
         """
-        import Ganga.Utility.Config
-        config = Ganga.Utility.Config.getConfig(
-            defaultConfigSectionName(self.name))
+        def_name = defaultConfigSectionName(self.name)
 
-        #item = self.getItem(attr)
-        item = None
+        item = self.getItem(attr)
 
-        # hidden, protected and sequence values are not represented in config
-        try:
+        stored_attr_key = def_name + ':' + str(attr)
+
+        from Ganga.Utility.Config import Config
+        from Ganga.Utility.Config import getConfig
+        is_finalized = Config._after_bootstrap
+
+        if is_finalized and stored_attr_key in _found_attrs.keys():
+            defvalue = _found_attrs[stored_attr_key]
+        else:
+            config = Ganga.Utility.Config.getConfig(def_name)
+
+            # hidden, protected and sequence values are not represented in config
             if attr in config:
                 defvalue = config[attr]
             else:
-                item = self.getItem(attr)
                 defvalue = item['defvalue']
-        except Ganga.Utility.Config.ConfigError as x:
-            defvalue = item['defvalue']
+            _found_attrs[stored_attr_key] = defvalue
 
         # in the checking mode, use the provided value instead
         if check:
             defvalue = val
 
-        if item is None:
-            item = self.getItem(attr)
         if item.isA(ComponentItem):
 
             # FIXME: limited support for initializing non-empty sequences (i.e.
@@ -251,12 +271,10 @@ class Schema(object):
                 # otherwise do a lookup via plugin registry
 
                 if isinstance(defvalue, str) or defvalue is None:
-                    from Ganga.Utility.Plugin import allPlugins
                     return allPlugins.find(item['category'], defvalue)()
 
         # make a copy of the default value (to avoid strange effects if the
         # original modified)
-        import copy
         return copy.deepcopy(defvalue)
 
 
@@ -349,7 +367,7 @@ class Item(object):
     def isA(self, what):
 
         this_type = type(what)
-        import types
+        from Ganga.GPIDev.Base.Proxy import stripProxy
 
         try:
             # for backwards compatibility with Ganga3 CLIP: if a string --
@@ -357,10 +375,15 @@ class Item(object):
             if isinstance(what, str):
                 # get access to all Item classes defined in this module
                 # (schema)
-                from . import Schema
-                what = getattr(Schema, what)
-            elif isinstance(what, types.InstanceType):
-                what = what.__class__
+                if hasattr(Schema, what):
+                    what = getattr(Schema, what)
+                else:
+                    return False
+            elif isinstance(stripProxy(what), types.InstanceType):
+                if hasattr(what, '__class__'):
+                    what = what.__class__
+                else:
+                    return False
 
         except AttributeError:
             # class not found
@@ -424,7 +447,6 @@ class Item(object):
         return txt
 
     def _check_type(self, val, name, enableGangaList=True):
-        from Ganga.Core import GangaAttributeError, TypeMismatchError, SchemaError
 
         if enableGangaList:
             from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList
@@ -448,25 +470,21 @@ class Item(object):
 
         def check(isAllowedType):
             if not isAllowedType:
-                raise TypeMismatchError(
-                    'Attribute "%s" expects a value of the following types: %s' % (name, validTypes))
+                raise TypeMismatchError('Attribute "%s" expects a value of the following types: %s' % (name, validTypes))
 
         if item._meta['sequence']:
             if not isinstance(item._meta['defvalue'], (list, GangaList)):
-                raise SchemaError(
-                    'Attribute "%s" defined as a sequence but defvalue is not a list.' % name)
+                raise SchemaError('Attribute "%s" defined as a sequence but defvalue is not a list.' % name)
 
             if not isinstance(val, (GangaList, list)):
-                raise TypeMismatchError(
-                    'Attribute "%s" expects a list.' % name)
+                raise TypeMismatchError('Attribute "%s" expects a list.' % name)
 
         if validTypes:
             if item._meta['sequence']:
 
                 for valItem in val:
                     if not valueTypeAllowed(valItem, validTypes):
-                        raise TypeMismatchError(
-                            'List entry %s for %s is invalid. Valid types: %s' % (valItem, name, validTypes))
+                        raise TypeMismatchError('List entry %s for %s is invalid. Valid types: %s' % (valItem, name, validTypes))
 
                 return
             else:  # Non-sequence
@@ -474,11 +492,9 @@ class Item(object):
                     if isinstance(val, dict):
                         for dKey, dVal in val.iteritems():
                             if not valueTypeAllowed(dKey, validTypes) or not valueTypeAllowed(dVal, validTypes):
-                                raise TypeMismatchError(
-                                    'Dictionary entry %s:%s for attribute %s is invalid. Valid types for key/value pairs: %s' % (dKey, dVal, name, validTypes))
+                                raise TypeMismatchError('Dictionary entry %s:%s for attribute %s is invalid. Valid types for key/value pairs: %s' % (dKey, dVal, name, validTypes))
                     else:  # new value is not a dict
-                        raise TypeMismatchError(
-                            'Attribute "%s" expects a dictionary.' % name)
+                        raise TypeMismatchError('Attribute "%s" expects a dictionary.' % name)
                     return
                 else:  # a 'simple' (i.e. non-dictionary) non-sequence value
                     check(valueTypeAllowed(val, validTypes))
@@ -486,12 +502,10 @@ class Item(object):
 
         # typelist is not defined, use the type of the default value
         if item._meta['defvalue'] is None:
-            logger.warning(
-                'type-checking disabled: type information not provided for %s, contact plugin developer', name)
+            logger.warning('type-checking disabled: type information not provided for %s, contact plugin developer', name)
         else:
             if item._meta['sequence']:
-                logger.warning(
-                    'type-checking is incomplete: type information not provided for a sequence %s, contact plugin developer', name)
+                logger.warning('type-checking is incomplete: type information not provided for a sequence %s, contact plugin developer', name)
             else:
                 check(isinstance(val, type(item._meta['defvalue'])))
 
@@ -516,7 +530,6 @@ class ComponentItem(Item):
     def _describe(self):
         return "'" + self['category'] + "' object," + Item._describe(self)
 
-from Ganga.GPIDev.TypeCheck import _valueTypeAllowed
 valueTypeAllowed = lambda val, valTypeList: _valueTypeAllowed(
     val, valTypeList, logger)
 
@@ -647,7 +660,6 @@ if __name__ == '__main__':
     logger.info(schema['application']['category'] +
                 ' ' + schema['application']['defvalue'])
 
-    import copy
     schema2 = copy.deepcopy(schema)
 
     assert(schema2 is not schema)

@@ -45,22 +45,9 @@ _externalPackages = {
                 'version' : '0.6.13_ganga_patch1',
                 'noarch': True,
                 'PYTHONPATH': 'lib/python'},
-    'uuid': {'version': '1.30',
-             'noarch': True,
-             'syspath': 'python'},
-    'ApMon': {'version': '2.2.11',
-              'noarch': True,
-              'syspath': 'python'},
-    'subprocess': {'version': '2.4.2',
-                   'syspath': 'lib/python2.2/site-packages',
-                   # in 2.5.0 subprocess is broken, bugfix:
-                   # http://savannah.cern.ch/bugs/?36178
-                   'maxHexVersion': '0x20501f0',
-                   'noarch': True},
-    'tarfile': {'version': '2.4.2',
-                'syspath': 'lib/python2.2/site-packages',
-                'maxHexVersion': '0x20300f0',
-                'noarch': True},
+    #'ApMon': {'version': '2.2.11',
+    #          'noarch': True,
+    #          'syspath': 'python'},
     'paramiko': {'version': '1.7.3',
                  'noarch': True,
                  'syspath': 'lib/python2.3/site-packages'},
@@ -117,16 +104,12 @@ def detectPlatform():
 
     platfstring = platf4
 
-    try:
-        import platform
-        import re
-        c = re.compile('\S+-redhat-(?P<ver>\S+)-\S+')
-        r = c.match(platform.platform())
-        if r and r.group('ver').split('.')[0] == '5':
-            platfstring = platf5
-    except ImportError, err:
-        logger.debug("Ganga PACKAGE Import Exception: %s" % str(err))
-        pass
+    import platform
+    import re
+    c = re.compile('\S+-redhat-(?P<ver>\S+)-\S+')
+    r = c.match(platform.platform())
+    if r and r.group('ver').split('.')[0] == '5':
+        platfstring = platf5
 
     return platfstring[arch]
 
