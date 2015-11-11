@@ -68,7 +68,8 @@ def __reader(readfd, writefd, output_ns, output_var):
     with os.fdopen(readfd, 'rb') as read_file:
         try:
             output_ns.update({output_var: pickle.load(read_file)})
-        except:
+        except Exception as err:
+            logger.debug("Err: %s" % str(err))
             pass  # EOFError triggered if command killed with timeout
 
 # /\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\
@@ -104,16 +105,15 @@ def execute(command,
     stream_command = 'cat<&0 | sh'
     if not shell:
         stream_command = 'python -'
-        command, pkl_read, pkl_write, envread, envwrite = python_wrapper(
-            command, python_setup, update_env)
+        command, pkl_read, pkl_write, envread, envwrite = python_wrapper(command, python_setup, update_env)
     elif update_env:
         # note the exec gets around the problem of indent and base64 gets
         # around the \n
         command_update, envread, envwrite = env_update_script()
-        command += ''';python -c "import base64;exec(base64.b64decode('%s'))"''' % base64.b64encode(command_update)
+        command += ''';python -c ""from __future__ import print_function;import base64;exec(base64.b64decode('%s'))"''' % base64.b64encode(command_update)
 
     if env is None and not update_env:
-        pipe = subprocess.Popen('python -c "from __future__ import print_function; import os; print(os.environ)"',
+        pipe = subprocess.Popen('python -c "from __future__ import print_function;import os;print(os.environ)"',
                                 env=None, cwd=None, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         output = pipe.communicate()
         env = eval(eval(str(output))[0])
@@ -192,13 +192,15 @@ def execute(command,
 
     try:
         stdout = pickle.loads(stdout)
-    except:
+    except Exception as err:
+        logger.debug("Err: %s" % str(err))
         local_ns = {}
         if isinstance(eval_includes, str):
             exec(eval_includes, {}, local_ns)
         try:
             stdout = eval(stdout, {}, local_ns)
-        except:
+        except Exception as err2:
+            logger.debug("Err2: %s" % str(err2))
             pass
 
     return_code = p.returncode

@@ -242,20 +242,24 @@ def submit(jdlpath, cred_req, ce=None, perusable=False):
 def native_master_cancel(jobids, cred_req):
     """Native bulk cancellation supported by GLITE middleware."""
 
-    idsfile = tempfile.mktemp('.jids')
-    with open(idsfile, 'w') as ids_file:
-        ids_file.write('\n'.join(jobids) + '\n')
-
     cmd = 'glite-wms-job-cancel'
 
     if not __set_submit_option__():
         return False
+
+    idsfile = tempfile.mktemp('.jids')
+    with open(idsfile, 'w') as ids_file:
+        ids_file.write('\n'.join(jobids) + '\n')
 
     cmd = '%s --noint -i %s' % (cmd, idsfile)
 
     logger.debug('job cancel command: %s' % cmd)
 
     rc, output, m = getShell(cred_req).cmd1(cmd, allowed_exit=[0, 255])
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     if rc != 0:
         logger.warning('Job cancellation failed.')
@@ -382,13 +386,13 @@ def status(jobids, cred_req, is_collection=False):
 def get_loginfo(jobids, directory, cred_req, verbosity=1):
     """Fetch the logging info of the given job and save the output in the job's outputdir"""
 
-    idsfile = tempfile.mktemp('.jids')
-    with open(idsfile, 'w') as ids_file:
-        ids_file.write('\n'.join(jobids) + '\n')
-
     cmd = 'glite-wms-job-logging-info -v %d' % verbosity
 
     log_output = directory + '/__jobloginfo__.log'
+
+    idsfile = tempfile.mktemp('.jids')
+    with open(idsfile, 'w') as ids_file:
+        ids_file.write('\n'.join(jobids) + '\n')
 
     cmd = '%s --noint -o %s -i %s' % (cmd, log_output, idsfile)
 
@@ -465,12 +469,12 @@ def cancel_multiple(jobids, cred_req):
     if not jobids:
         return True
 
+    # do the cancellation using a proper LCG command
+    cmd = 'glite-wms-job-cancel'
+
     idsfile = tempfile.mktemp('.jids')
     with open(idsfile, 'w') as ids_file:
         ids_file.write('\n'.join(jobids) + '\n')
-
-    # do the cancellation using a proper LCG command
-    cmd = 'glite-wms-job-cancel'
 
     # compose the cancel command
     cmd = '%s --noint -i %s' % (cmd, idsfile)
@@ -478,6 +482,10 @@ def cancel_multiple(jobids, cred_req):
     logger.debug('job cancel command: %s' % cmd)
 
     rc, output, m = getShell(cred_req).cmd1(cmd, allowed_exit=[0, 255])
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     if rc == 0:
         # job cancelling succeeded, try to remove the glite command logfile
@@ -673,6 +681,10 @@ def cream_status(jobids, cred_req):
     if rc == 0 and output:
         job_info_dict = __cream_parse_job_status__(output)
 
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
+
     return job_info_dict
 
 
@@ -692,6 +704,10 @@ def cream_purge_multiple(jobids, cred_req):
     rc, output, m = getShell(cred_req).cmd1(cmd, allowed_exit=[0, 255])
 
     logger.debug(output)
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     if rc == 0:
         return True
@@ -715,6 +731,10 @@ def cream_cancel_multiple(jobids, cred_req):
     rc, output, m = getShell(cred_req).cmd1(cmd, allowed_exit=[0, 255])
 
     logger.debug(output)
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     if rc == 0:
         return True
@@ -864,7 +884,6 @@ def expandjdl(items):
 
         elif key in ['PerusalFileEnable', 'AllowZippedISB']:
             text += '%s = %s;\n' % (key, value)
-
         else:
             text += '%s = "%s";\n' % (key, value)
 
@@ -975,6 +994,10 @@ def arc_status(jobids, ce_list, cred_req):
 
     if rc == 0 and output:
         job_info_dict = __arc_parse_job_status__(output)
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     return job_info_dict
 
@@ -1092,6 +1115,10 @@ def arc_purge_multiple(jobids, cred_req):
 
     logger.debug(output)
 
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
+
     if rc == 0:
         return True
     else:
@@ -1128,11 +1155,11 @@ def arc_cancel_multiple(jobids, cred_req):
     if not jobids:
         return True
 
+    cmd = 'arckill'
+
     idsfile = tempfile.mktemp('.jids')
     with open(idsfile, 'w') as ids_file:
         ids_file.write('\n'.join(jobids) + '\n')
-
-    cmd = 'arckill'
 
     # compose the cancel command
     cmd = '%s %s -i %s -j %s' % (
@@ -1141,6 +1168,10 @@ def arc_cancel_multiple(jobids, cred_req):
     logger.debug('job cancel command: %s' % cmd)
 
     rc, output, m = getShell(cred_req).cmd1(cmd, allowed_exit=[0, 255])
+
+    # clean up tempfile
+    if os.path.exists(idsfile):
+        os.remove(idsfile)
 
     if rc == 0:
         # job cancelling succeeded, try to remove the glite command logfile

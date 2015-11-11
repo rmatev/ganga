@@ -357,6 +357,9 @@ class Item(object):
     def __getitem__(self, key):
         return self._meta[key]
 
+    def hasProperty(self, key):
+        return key in self._meta
+
     def __len__(self):
         return len(self._meta)
 
@@ -533,10 +536,13 @@ class ComponentItem(Item):
 valueTypeAllowed = lambda val, valTypeList: _valueTypeAllowed(
     val, valTypeList, logger)
 
+defaultValue='_NOT_A_VALUE_'
 
 class SimpleItem(Item):
 
-    def __init__(self, defvalue, typelist=[], **kwds):
+    def __init__(self, defvalue, typelist=defaultValue, **kwds):
+        if typelist == defaultValue:
+            typelist = []
         Item.__init__(self)
         kwds['defvalue'] = defvalue
         kwds['typelist'] = typelist
@@ -548,7 +554,9 @@ class SimpleItem(Item):
 
 class SharedItem(Item):
 
-    def __init__(self, defvalue, typelist=[], **kwds):
+    def __init__(self, defvalue, typelist=defaultValue, **kwds):
+        if typelist == defaultValue:
+            typelist = []
         Item.__init__(self)
         kwds['defvalue'] = defvalue
         kwds['typelist'] = typelist

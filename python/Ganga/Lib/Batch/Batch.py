@@ -104,15 +104,16 @@ class Batch(IBackend):
     def __init__(self):
         super(Batch, self).__init__()
 
-    def command(klass, cmd, soutfile=None, allowed_exit=[0]):
+    def command(klass, cmd, soutfile=None, allowed_exit=None):
+        if allowed_exit is None:
+            allowed_exit = [0]
         rc, soutfile, ef = shell_cmd(cmd, soutfile, allowed_exit)
         if not ef:
             logger.error(
                 'Problem submitting batch job. Maybe your chosen batch system is not available or you have configured it wrongly')
             with open(soutfile) as sout_file:
                 logger.error(sout_file.read())
-                raiseable = BackendError(klass._name, 'It seems that %s commands are not installed properly:%s' % (
-                    klass._name, sout_file.readline()))
+                raiseable = BackendError(klass._name, 'It seems that %s commands are not installed properly:%s' % (klass._name, sout_file.readline()))
         return rc, soutfile
 
     command = classmethod(command)
@@ -162,7 +163,8 @@ class Batch(IBackend):
         if jobnameopt and job.name != '':
             # PBS doesn't like names with spaces
             tmp_name = job.name
-            if self._name == "PBS":
+            from Ganga.GPI import PBS
+            if isType(self, PBS):
                 tmp_name = tmp_name.replace(" ", "_")
             queue_option = queue_option + " " + \
                 jobnameopt + " " + "'%s'" % (tmp_name)
@@ -198,6 +200,10 @@ class Batch(IBackend):
             except IndexError:
                 logger.info('could not match the output and extract the Batch queue name')
 
+        # clean up the tmp file
+        if os.path.exists(soutfile):
+            os.remove(soutfile)
+
         return rc == 0
 
     def resubmit(self):
@@ -228,7 +234,8 @@ class Batch(IBackend):
 
         try:
             jobnameopt = "-" + self.config['jobnameopt']
-        except:
+        except Exception as err:
+            logger.debug("Err: %s" % str(err))
             jobnameopt = False
 
         if self.extraopts:
@@ -246,8 +253,12 @@ class Batch(IBackend):
             queue_option = queue_option + " " + self.extraopts
 
         if jobnameopt and job.name != '':
+            # PBS doesn't like names with spaces
+            tmp_name = job.name
+            if self._name == "PBS":
+                tmp_name = tmp_name.replace(" ", "_")
             queue_option = queue_option + " " + \
-                jobnameopt + " " + "'%s'" % (job.name)
+                jobnameopt + " " + "'%s'" % (tmp_name)
 
         # bugfix #16646
         if self.config['shared_python_executable']:
@@ -440,6 +451,7 @@ class Batch(IBackend):
 
         return job.getInputWorkspace().writefile(FileBuffer('__jobscript__', text), executable=1)
 
+    @staticmethod
     def updateMonitoringInformation(jobs):
 
         import re
@@ -532,8 +544,6 @@ class Batch(IBackend):
                         logger.warning(
                             'Job %s has disappeared from the batch system.', str(j.getFQID('.')))
                         j.updateStatus('failed')
-
-    updateMonitoringInformation = staticmethod(updateMonitoringInformation)
 
 #_________________________________________________________________________
 

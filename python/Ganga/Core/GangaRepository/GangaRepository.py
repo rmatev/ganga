@@ -16,6 +16,7 @@ import Ganga.Utility.logging
 
 from Ganga.Utility.Plugin import allPlugins
 from Ganga.Core import GangaException
+from Ganga.GPIDev.Base.Proxy import getName
 
 logger = Ganga.Utility.logging.getLogger()
 
@@ -34,7 +35,7 @@ class SchemaVersionError(GangaException):
 
 class InaccessibleObjectError(GangaException):
 
-    def __init__(self, repo=None, id='', orig=None):
+    def __init__(self, repo=None, id='', orig=None, tb=None):
         GangaException.__init__(self, "Inaccessible Object")
         self.repo = repo
         self.id = id
@@ -45,7 +46,7 @@ class InaccessibleObjectError(GangaException):
         if str(self.orig).find('comments') > -1:
             return "Please restart Ganga in order to reload the object"
         else:
-            return "Repository '%s' object #%s is not accessible because of an %s: %s\n%s" % (self.repo.registry.name, self.id, self.orig.__class__.__name__, str(self.orig), self.tb)
+            return "Repository '%s' object #%s is not accessible because of an %s: %s\n%s" % (self.repo.registry.name, self.id, getName(self.orig), self.orig, self.tb)
 
 
 class RepositoryError(GangaException):

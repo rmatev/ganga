@@ -5,10 +5,9 @@
 ##########################################################################
 
 from Ganga.GPIDev.Base import GangaObject
-from Ganga.GPIDev.Base.Proxy import TypeMismatchError
+from Ganga.GPIDev.Base.Proxy import TypeMismatchError, isType, stripProxy
 from Ganga.GPIDev.Schema import Schema, Version
-from Ganga.Utility.util import containsGangaObjects, isNestedList
-
+from Ganga.Utility.util import containsGangaObjects
 
 class SplittingError(Exception):
 
@@ -22,13 +21,6 @@ class ISplitter(GangaObject):
     _schema = Schema(Version(0, 0), {})
     _category = 'splitters'
     _hidden = 1
-
-    def _checksetNestedLists(self, value):
-        """The rule is that if there are nested lists then they 
-        must not contain GangaObjects, as this corrupts the repository"""
-        if isNestedList(value) and containsGangaObjects(value):
-            raise TypeMismatchError(
-                'Assigning nested lists which contain Ganga GPI Objects is not supported.')
 
     def createSubjob(self, job):
         """ Create a new subjob by copying the master job and setting all fields correctly.
@@ -79,9 +71,8 @@ class ISplitter(GangaObject):
 
         cnt = 0
         for s in subjobs:
-            if s.backend._name != job.backend._name:
-                raise SplittingError('masterjob backend %s is not the same as the subjob (probable subjob id=%d) backend %s' % (
-                    job.backend._name, cnt, s.backend._name))
+            if not isType(s.backend, type(stripProxy(job.backend))):
+                raise SplittingError('masterjob backend %s is not the same as the subjob (probable subjob id=%d) backend %s' % (job.backend._name, cnt, s.backend._name))
             cnt += 1
 
         return subjobs

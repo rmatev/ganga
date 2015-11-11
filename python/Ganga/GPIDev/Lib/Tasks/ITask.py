@@ -62,7 +62,6 @@ class ITask(GangaObject):
 
     def initialize(self):
         self.transforms = []
-        pass
 
     def startup(self):
         """Startup function on Ganga startup"""
@@ -150,14 +149,16 @@ class ITask(GangaObject):
                         try:
                             j = GPI.jobs(jid)
                             j.remove()
-                        except:
+                        except Exception as err:
+                            logger.debug("Remove Err: %s" % str(err))
                             pass
 
                     for jid in unit.prev_job_ids:
                         try:
                             j = GPI.jobs(jid)
                             j.remove()
-                        except:
+                        except Exception as err2:
+                            logger.debug("Remove Err2: %s" % str(err2))
                             pass
 
         self._getRegistry()._remove(self)
@@ -243,6 +244,7 @@ class ITask(GangaObject):
         # this means that t.insertTransform(0,t2.transforms[0]) will cause
         # Great Breakage
         self.transforms.insert(id, tf)
+        stripProxy(tf).id = id
 
     def appendTransform(self, tf):
         """Append transform"""
@@ -309,7 +311,7 @@ class ITask(GangaObject):
 
     def table(self):
         from Ganga.GPI import tasks
-        print(tasks[self.id:self.id + 1].table())
+        tasks[self.id:self.id].table()
 
     def overview(self, status=''):
         """ Show an overview of the Task """

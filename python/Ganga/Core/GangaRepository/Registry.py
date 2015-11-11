@@ -6,7 +6,7 @@ from Ganga.Core.GangaRepository import InaccessibleObjectError
 import time
 import threading
 
-from Ganga.GPIDev.Base.Proxy import stripProxy, isType
+from Ganga.GPIDev.Base.Proxy import stripProxy, isType, getName
 
 logger = Ganga.Utility.logging.getLogger()
 
@@ -124,7 +124,6 @@ class IncompleteObject(object):
                     errstr += " Object is locked by session '%s' " % self.registry.repository.get_lock_session(self.id)
                 except Exception as err:
                     logger.debug("Remove Lock error: %s" % str(err))
-                    pass
                 raise RegistryLockError(errstr)
             self.registry.repository.delete([self.id])
             for d in self.registry.changed_ids.itervalues():
@@ -235,10 +234,10 @@ class Registry(object):
                 assert obj == self._objects[obj._registry_id]
                 return obj._registry_id
             else:
-                raise ObjectNotInRegistryError("Object %s does not seem to be in this registry!" % obj.__class__.__name__)
+                raise ObjectNotInRegistryError("Object %s does not seem to be in this registry!" % getName(obj))
         except AttributeError, err:
             logger.debug("%s" % str(err))
-            raise ObjectNotInRegistryError("Object %s does not seem to be in any registry!" % obj.__class__.__name__)
+            raise ObjectNotInRegistryError("Object %s does not seem to be in any registry!" % getName(obj))
         except AssertionError, err:
             logger.warning("%s" % str(err))
             from Ganga.GPIDev.Lib.JobTree import JobTree
@@ -246,10 +245,10 @@ class Registry(object):
                 return obj._registry_id
             import traceback
             traceback.print_stack()
-            raise ObjectNotInRegistryError("Object %s is a duplicated version of the one in this registry!" % obj.__class__.__name__)
+            raise ObjectNotInRegistryError("Object %s is a duplicated version of the one in this registry!" % getName(obj))
         except KeyError, err:
             logger.debug("%s", str(err))
-            raise ObjectNotInRegistryError("Object %s does not seem to be in this registry!" % obj.__class__.__name__)
+            raise ObjectNotInRegistryError("Object %s does not seem to be in this registry!" % getName(obj))
 
     def clean(self, force=False):
         """Deletes all elements of the registry, if no other sessions are present.
@@ -363,17 +362,25 @@ class Registry(object):
         finally:
             self._lock.release()
 
-    def _flush(self, objs=[]):
+    def _flush(self, objs=None):
         """Flush a set of objects to the persistency layer immediately
         Raise RepositoryError
         Raise RegistryAccessError
         Raise RegistryLockError"""
+
+        if objs is None:
+            objs = []
+
         logger.debug("Reg: %s _flush(%s)" % (self.name, objs))
         if not self._started:
             raise RegistryAccessError(
                 "Cannot flush to a disconnected repository!")
         for obj in objs:
             self._write_access(obj)
+
+        from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList
+        if not (isinstance(objs, list) or isType(objs, GangaList)):
+            objs = [objs]
 
         self._lock.acquire()
         try:
@@ -445,7 +452,6 @@ class Registry(object):
                             errstr += " Object is locked by session '%s' " % self.repository.get_lock_session(id)
                         except Exception as err:
                             logger.debug( "Locking Exception: %s" % str(err) )
-                            pass
                         raise RegistryLockError(errstr)
                 finally:  # try to load even if lock fails
                     try:
@@ -540,6 +546,8 @@ class Registry(object):
 
     def shutdown(self):
         """Flush and disconnect the repository. Called from Repository_runtime.py """
+        from Ganga.Utility.logging import getLogger
+        logger = getLogger()
         logger.debug("Shutting Down Registry")
         self._lock.acquire()
         try:
@@ -549,7 +557,6 @@ class Registry(object):
                         self._flush()
                     except Exception, err:
                         logger.debug("shutdown _flush Exception: %s" % str(err))
-                        pass
                     self.metadata.shutdown()
             except Exception as err:
                 logger.debug("Exception on shutting down metadata repository '%s' registry: %s", self.name, str(err))

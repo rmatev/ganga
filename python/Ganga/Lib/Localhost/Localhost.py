@@ -35,8 +35,7 @@ class Localhost(IBackend):
 
     The job is run in the workdir (usually in /tmp).
     """
-    _schema = Schema(Version(1, 2), {'nice': SimpleItem(defvalue=None, typelist=None, doc='*NOT USED*', hidden=1),
-                                     'id': SimpleItem(defvalue=-1, protected=1, copyable=0, doc='Process id.'),
+    _schema = Schema(Version(1, 2), {'id': SimpleItem(defvalue=-1, protected=1, copyable=0, doc='Process id.'),
                                      'status': SimpleItem(defvalue=None, typelist=None, protected=1, copyable=0, hidden=1, doc='*NOT USED*'),
                                      'exitcode': SimpleItem(defvalue=None, typelist=['int', 'type(None)'], protected=1, copyable=0, doc='Process exit code.'),
                                      'workdir': SimpleItem(defvalue='', protected=1, copyable=0, doc='Working directory.'),
@@ -46,12 +45,6 @@ class Localhost(IBackend):
                                      })
     _category = 'backends'
     _name = 'Local'
-    _GUIPrefs = [{'attribute': 'nice', 'widget': 'String'},
-                 {'attribute': 'id', 'widget': 'Int'},
-                 {'attribute': 'status', 'widget': 'String'},
-                 {'attribute': 'exitcode', 'widget': 'String'}]
-    _GUIAdvancedPrefs = [{'attribute': 'nice', 'widget': 'String'},
-                         {'attribute': 'exitcode', 'widget': 'String'}]
 
     def __init__(self):
         super(Localhost, self).__init__()
@@ -286,6 +279,7 @@ class Localhost(IBackend):
                 logger.warning(
                     'problem removing the workdir %s: %s', str(self.id), str(x))
 
+    @staticmethod
     def updateMonitoringInformation(jobs):
 
         def get_exit_code(f):
@@ -375,6 +369,4 @@ class Localhost(IBackend):
                 # j.outputdata.fill()
 
                 j.backend.remove_workdir()
-
-    updateMonitoringInformation = staticmethod(updateMonitoringInformation)
 
