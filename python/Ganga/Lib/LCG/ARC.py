@@ -1156,6 +1156,7 @@ sys.exit(0)
 
         return ick
 
+    @staticmethod
     def updateMonitoringInformation(jobs):
         '''Monitoring loop for normal jobs'''
 
@@ -1250,7 +1251,6 @@ sys.exit(0)
                 if not Grid.arc_purge_multiple(set(job_ids) & set(jidListForPurge), cred_req):
                     logger.warning("Failed to purge all ARC jobs.")
 
-    updateMonitoringInformation = staticmethod(updateMonitoringInformation)
 
     def updateGangaJobStatus(self):
         '''map backend job status to Ganga job status'''

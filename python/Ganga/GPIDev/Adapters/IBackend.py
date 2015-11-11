@@ -5,6 +5,7 @@
 ##########################################################################
 
 from Ganga.GPIDev.Base import GangaObject
+from Ganga.GPIDev.Base.Proxy import stripProxy
 from Ganga.GPIDev.Schema import Schema, Version
 
 import Ganga.Utility.logging
@@ -69,12 +70,12 @@ class IBackend(GangaObject):
             #from Ganga.Utility.logging import log_user_exception
             sj.updateStatus('failed')
 
-            from Ganga.Core.exceptions import GangaException
-            if isinstance(err, GangaException):
-                logger.error(str(err))
-                log_user_exception(logger, debug=True)
-            else:
-                log_user_exception(logger, debug=False)
+            #from Ganga.Core.exceptions import GangaException
+            #if isinstance(err, GangaException):
+            #    logger.error(str(err))
+            #    #log_user_exception(logger, debug=True)
+            #else:
+            #    #log_user_exception(logger, debug=False)
         finally:
             pass
 
@@ -254,7 +255,8 @@ class IBackend(GangaObject):
 
         tmpDir = None
         files = []
-        if len(job.inputfiles) > 0 or (len(job.subjobs) == 0 and job.inputdata and job.inputdata._name == "GangaDataset" and job.inputdata.treat_as_inputfiles):
+        if len(job.inputfiles) > 0 or (len(job.subjobs) == 0 and job.inputdata and\
+                isType(job.inputdata, GangaDataset) and job.inputdata.treat_as_inputfiles):
             (fileNames, tmpDir) = getInputFilesPatterns(job)
             files = itertools.imap(lambda f: File(f), fileNames)
         else:
@@ -301,8 +303,7 @@ class IBackend(GangaObject):
         try:
             for sj in rjobs:
                 fqid = sj.getFQID('.')
-                logger.info(
-                    "resubmitting job %s to %s backend", fqid, sj.backend._name)
+                logger.info("resubmitting job %s to %s backend", fqid, sj.backend._name)
                 try:
                     b = sj.backend
                     sj.updateStatus('submitting')
@@ -399,6 +400,7 @@ class IBackend(GangaObject):
         """
         pass
 
+    @staticmethod
     def master_updateMonitoringInformation(jobs):
         """ Update monitoring information for  jobs: jobs is a list of
         jobs  in   this  backend  which   require  monitoring  (either
@@ -409,30 +411,76 @@ class IBackend(GangaObject):
         updateMonitoringInformation().
         """
 
-        simple_jobs = []
+        ## Have to import here so it's actually defined
+        from Ganga.Core import monitoring_component
+
+        logger.debug("Running Monitoring for Jobs: %s" % str([j.getFQID('.') for j in jobs]))
+
+        ## Only process 10 files from the backend at once
+        blocks_of_size = 10
+        ## Separate different backends implicitly
+        simple_jobs = {}
 
         # FIXME Add some check for (sub)jobs which are in a transient state but
         # are not locked by an active session of ganga
 
         for j in jobs:
-            if len(j.subjobs):
-                monitorable_subjobs = [
-                    s for s in j.subjobs if s.status in ['submitted', 'running']]
-                logger.debug('Monitoring subjobs: %s', repr(
-                    [jj._repr() for jj in monitorable_subjobs]))
-                j.backend.updateMonitoringInformation(monitorable_subjobs)
-                j.updateMasterJobStatus()
+            ## All subjobs should have same backend
+            if len(j.subjobs) > 0:
+                monitorable_subjobs = [sj for sj in j.subjobs if sj.status in ['submitted', 'running']]
+
+                logger.debug('Monitoring subjobs: %s', repr([sj._repr() for sj in monitorable_subjobs]))
+
+                if not monitorable_subjobs:
+                    continue
+
+                stripProxy(j)._getWriteAccess()
+
+                monitorable_blocks = []
+                temp_block = []
+
+                for this_sj in monitorable_subjobs:
+                    temp_block.append(this_sj)
+                    if len(temp_block) == blocks_of_size:
+                        monitorable_blocks.append(temp_block)
+                        temp_block = []
+
+                if temp_block:
+                    monitorable_blocks.append(temp_block)
+                    temp_block = []
+
+                for this_block in monitorable_blocks:
+
+                    if monitoring_component and not monitoring_component.isEnabled(False) or not monitoring_component:
+                        break
+
+                    try:
+                        j.backend.updateMonitoringInformation(this_block)
+                    except Exception as err:
+                        logger.error("Monitoring Error: %s" % str(err))
+                    j.updateMasterJobStatus()
+
+                stripProxy(j)._setDirty()
             else:
-                simple_jobs.append(j)
+                backend_name = j.backend.__class__.__name__
+                if backend_name not in simple_jobs.keys():
+                    simple_jobs[backend_name] = []
+                simple_jobs[backend_name].append(j)
 
-        if simple_jobs:
-            logger.debug(
-                'Monitoring jobs: %s', repr([jj._repr() for jj in simple_jobs]))
-            simple_jobs[0].backend.updateMonitoringInformation(simple_jobs)
+        if len(simple_jobs.keys()) > 0:
+            for this_backend in simple_jobs.keys():
+                logger.debug('Monitoring jobs: %s', repr([jj._repr() for jj in simple_jobs[this_backend]]))
 
-    master_updateMonitoringInformation = staticmethod(
-        master_updateMonitoringInformation)
+                for this_job in simple_jobs[this_backend]:
+                    stripProxy(this_job)._getWriteAccess()
+                simple_jobs[this_backend][0].backend.updateMonitoringInformation(simple_jobs[this_backend])
 
+                for this_job in simple_jobs[this_backend]:
+                    stripProxy(this_job)._setDirty()
+
+        logger.debug("Finished Monitoring request")
+
+    @staticmethod
     def updateMonitoringInformation(jobs):
         """ Update monitoring information for individual jobs: jobs is
         a  list which  may contain  subjobs as  well as  the non-split
@@ -442,5 +490,3 @@ class IBackend(GangaObject):
         """
 
         raise NotImplementedError
-
-    updateMonitoringInformation = staticmethod(updateMonitoringInformation)

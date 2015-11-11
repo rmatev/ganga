@@ -5,7 +5,25 @@ from Ganga.GPIDev.Base.Objects import GangaObject
 from Ganga.Utility.logging import getLogger
 from Ganga.Core.GangaRepository.VStreamer import from_file, to_file
 from Ganga.Core.exceptions import GangaException
+import errno
 logger = getLogger()
+
+##FIXME There has to be a better way of doing this?
+class SJXLIterator(object):
+
+    def __init__(self, theseSubJobs):
+
+        self._mySubJobs = theseSubJobs
+        self._myCount = 0
+
+    ## NB becomes __next__ in Python 3.x don't know if Python 2.7 has a wrapper here
+    def next(self):
+        if self._myCount < len(self._mySubJobs):
+            self._myCount += 1
+            return self._mySubJobs[self._myCount-1]
+        else:
+            raise StopIteration
+
 
 class SubJobXMLList(GangaObject):
     """
@@ -14,7 +32,7 @@ class SubJobXMLList(GangaObject):
     """
 
     _category = 'internal'
-    _exportmethods = ['__getitem__', '__len__', '__iter__', 'getAllCachedData']
+    _exportmethods = ['__getitem__', '__len__', '__iter__', 'getAllCachedData', 'values']
     _hidden = True
     _name = 'SubJobXMLList'
 
@@ -48,7 +66,7 @@ class SubJobXMLList(GangaObject):
     def __deepcopy__(self, memo=None):
         cls = type(self)
         obj = super(cls, cls).__new__(cls)
-        dict = self.__dict__.copy()
+        dict = self.__dict__.__deepcopy__(memo)
         obj.__dict__ = dict
         return obj
 
@@ -110,7 +128,6 @@ class SubJobXMLList(GangaObject):
             index_file_obj.close()
         except Exception, err:
             logger.debug( "cache write error: %s" % str(err) )
-            pass
 
     #def _attribute_filter__get__(self, name ):
 
@@ -127,19 +144,13 @@ class SubJobXMLList(GangaObject):
     #        self.__getattribute__(self, name )
 
     def __iter__(self):
-        if self._storedList == []:
-            i=0
-            for i in range( len(self) ):
-                self._storedList.append( self.__getitem__( i ) )
-                i+=1
-        for subjob in self._storedList:
-            yield subjob
+        return SJXLIterator(self)
 
     def __get_dataFile(self, index):
         import os.path
         subjob_data = os.path.join(self._jobDirectory, str(index), self._dataFileName)
         if self._load_backup:
-            subjob_data.append('~')
+            subjob_data = subjob_data + '~'
         return subjob_data
 
     def __len__(self):
@@ -160,45 +171,68 @@ class SubJobXMLList(GangaObject):
 
         return subjob_count
 
+    def values(self):
+        return [self[i] for i in range(0, len(self))]
+
+    def _loadSubJobFromDisk(self, subjob_data):
+        # For debugging where this was called from to try and push it to as high a level as possible at runtime
+        #import traceback
+        #traceback.print_stack()
+        #import sys
+        #sys.exit(-1)
+        try:
+            job_obj = self.getJobObject()
+        except Exception, err:
+            logger.debug( "Error: %s" % str(err) )
+            job_obj = None
+        if job_obj is not None:
+            fqid = job_obj.getFQID('.')
+            logger.debug( "Loading subjob at: %s for job %s" % (subjob_data, fqid) )
+        else:
+            logger.debug( "Loading subjob at: %s" % subjob_data )
+        sj_file = open(subjob_data, "r")
+        return sj_file
+
     def __getitem__(self, index):
 
         logger.debug("Requesting: %s" % str(index))
 
+        subjob_data = None
         if not index in self._cachedJobs.keys():
             if len(self) < index:
                 raise GangaException("Subjob: %s does NOT exist" % str(index))
             subjob_data = self.__get_dataFile(str(index))
             try:
-                # For debugging where this was called from to try and push it to as high a level as possible at runtime
-                #import traceback
-                #traceback.print_stack()
-                #import sys
-                #sys.exit(-1)
-                try:
-                    job_obj = self.getJobObject()
-                except Exception, err:
-                    logger.debug( "Error: %s" % str(err) )
-                    job_obj = None
-                if job_obj:
-                    fqid = job_obj.getFQID('.')
-                    logger.debug( "Loading subjob at: %s for job %s" % (subjob_data, str(fqid)) )
-                else:
-                    logger.debug( "Loading subjob at: %s" % subjob_data )
-                sj_file = open(subjob_data, "r")
-            except IOError, x:
+                sj_file = self._loadSubJobFromDisk(subjob_data)
+            except IOError as x:
                 if x.errno == errno.ENOENT:
-                    raise IOError("Subobject %i.%i not found: %s" % (id,i,x))
+                    raise IOError("Subobject %s not found: %s" % (fqid, x))
                 else:
-                    raise RepositoryError(self,"IOError on loading subobject %i.%i: %s" % (id,i,x))
-            self._cachedJobs[index] = self._from_file(sj_file)[0]
+                    raise RepositoryError(self,"IOError on loading subobject %s: %s" % (fqid, x))
 
-        logger.debug('Setting Parent: "%s"' % str(self._definedParent))
+            try:
+                self._cachedJobs[index] = self._from_file(sj_file)[0]
+            except Exception as err:
+                logger.debug("Failed to Load XML for job: %s using: %s" % (str(index), str(subjob_data)))
+                logger.debug("Err:\n%s" % str(err))
+                raise err
+
+        if self._definedParent is not None:
+            parent_name = "Job: %s" % self._definedParent.getFQID('.')
+        else:
+            parent_name = "None"
+        logger.debug('Setting Parent: %s' % parent_name)
         if self._definedParent:
             self._cachedJobs[index]._setParent( self._definedParent )
         return self._cachedJobs[index]
 
     def _setParent(self, parentObj):
-        logger.debug('Setting Parent: %s' % str(parentObj))
+        
+        if parentObj is not None:
+            parent_name = "Job: %s" % parentObj.getFQID('.')
+        else:
+            parent_name = "None"
+        logger.debug('Setting Parent: %s' % parent_name)
 
         super(SubJobXMLList, self)._setParent( parentObj )
         if not hasattr(self, '_cachedJobs'):

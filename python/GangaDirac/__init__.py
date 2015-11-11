@@ -1,8 +1,10 @@
 import os
 #from multiprocessing     import cpu_count
 from Ganga.Utility.Config import makeConfig, getConfig
+from Ganga.Utility.logging import getLogger
 configDirac = makeConfig('DIRAC', 'Parameters for DIRAC')
 config = getConfig('Configuration')
+logger = getLogger()
 
 # Set default values for the Dirac section.
 # configDirac.addOption('ShowDIRACstdout', False,
@@ -69,7 +71,7 @@ configDirac.addOption('OfflineSplitterLimit', 50,
                       'Number of iterations of selecting random Sites that are performed before the spliter reduces the OfflineSplitter fraction by raising it by 1 power and reduces OfflineSplitterMaxCommonSites by 1. Smaller number makes the splitter accept many smaller subsets higher means keeping more subsets but takes much more CPU to match files accordingly.')
 
 
-def getEnvironment(config={}):
+def getEnvironment(config=None):
     import sys
     import os.path
     import PACKAGE
@@ -78,7 +80,11 @@ def getEnvironment(config={}):
     return
 
 
-def loadPlugins(config={}):
+def loadPlugins(config=None):
+    logger.debug("Loading Backends")
     import Lib.Backends
+    logger.debug("Loading RTHandlers")
     import Lib.RTHandlers
+    logger.debug("Loading Files")
     import Lib.Files
+

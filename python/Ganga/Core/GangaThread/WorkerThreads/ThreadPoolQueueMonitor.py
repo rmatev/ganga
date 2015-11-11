@@ -47,6 +47,7 @@ class ThreadPoolQueueMonitor(object):
         _monitoring_threadpool = self._monitoring_threadpool
 
         self._locked = False
+        self._shutdown = False
 
     def _display_element(self, item):
         if hasattr(item, 'name') and item.name != None:
@@ -56,7 +57,7 @@ class ThreadPoolQueueMonitor(object):
         else:
             return item.command_input[0]
 
-    def _display(self, i):
+    def _display(self):
         '''Return the current status of the thread pools and queues.'''
         output = ''
         output += '{0:^67} | {1:^50}\n'.format('Ganga user threads:', 'Ganga monitoring threads:')
@@ -84,13 +85,11 @@ class ThreadPoolQueueMonitor(object):
         output += '\n'
         output += "Ganga user queue:\n"
         output += "----------------\n"
-        output += str([self._display_element(i)
-                       for i in self._user_threadpool.get_queue()])
+        output += str([self._display_element(elem) for elem in self._user_threadpool.get_queue()])
         output += '\n'
         output += "Ganga monitoring queue:\n"
         output += "----------------------\n"
-        output += str([self._display_element(i)
-                       for i in self._monitoring_threadpool.get_queue()])
+        output += str([self._display_element(elem) for elem in self._monitoring_threadpool.get_queue()])
         return output
 
     def _repr_pretty_(self, p, cycle):
@@ -124,13 +123,13 @@ class ThreadPoolQueueMonitor(object):
             while keyin == None:
                 print "User queue contains unfinished tasks:"
                 print str([self._display_element(i) for i in _user_queue])
-                keyin = raw_input("Do you want to Purge the user queue [y/n] ")
-                if keyin == 'y':
+                keyin = raw_input("Do you want to Purge the user queue ([y]/n): ")
+                if keyin in ['y', '']:
                     _actually_purge = True
                 elif keyin == 'n':
                     _actually_purge = False
                 else:
-                    print "y/n please!"
+                    print "(y/n) please!"
                     keyin = None
         if _actually_purge:
             self._user_threadpool.clear_queue()
@@ -156,13 +155,13 @@ class ThreadPoolQueueMonitor(object):
             while keyin == None:
                 print "Monitoring queue contains unfinished tasks:"
                 print str([self._display_element(i) for i in _monitor_queue])
-                keyin = raw_input("Do you want to Purge the monitoring queue [y/n] ")
-                if keyin == 'y':
+                keyin = raw_input("Do you want to Purge the monitoring queue ([y]/n): ")
+                if keyin in ['y', '']:
                     _actually_purge = True
                 elif keyin == 'n':
                     _actually_purge = False
                 else:
-                    print "y/n please"
+                    print "(y/n) please"
                     keyin = None
         if _actually_purge:
             self._monitoring_threadpool.clear_queue()
@@ -218,7 +217,8 @@ class ThreadPoolQueueMonitor(object):
             return
 
         if self._locked is True:
-            logger.warning("Queue System is locked not adding any more System processes!")
+            if not self._shutdown:
+                logger.warning("Queue System is locked not adding any more System processes!")
             return
 
         self._monitoring_threadpool.add_function(worker_code,
@@ -301,7 +301,8 @@ class ThreadPoolQueueMonitor(object):
             return
 
         if self._locked is True:
-            logger.warning("Queues system is Locked. Not adding any more processes!")
+            if not self._shutdown:
+                logger.warning("Queues system is Locked. Not adding any more processes!")
             return
 
         self._user_threadpool.add_process(command,
@@ -363,9 +364,10 @@ class ThreadPoolQueueMonitor(object):
         self._user_threadpool._locked = False
         self._monitoring_threadpool._locked = False
 
-    def _stop_all_threads(self):
-        self._user_threadpool._stop_worker_threads()
-        self._monitoring_threadpool._stop_worker_threads()
+    def _stop_all_threads(self, shutdown=False):
+        self._shutdown = shutdown
+        self._user_threadpool._stop_worker_threads(shutdown)
+        self._monitoring_threadpool._stop_worker_threads(shutdown)
         return
 
     def _start_all_threads(self):

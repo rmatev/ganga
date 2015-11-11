@@ -41,9 +41,8 @@ def taskify(baseclass, name):
         "__init__": __task__init__,
     }
 
-    for var in ["_GUIPrefs", "_GUIAdvancedPrefs", "_exportmethods"]:
-        if var in baseclass.__dict__:
-            classdict[var] = baseclass.__dict__[var]
+    if '_exportmethods' in baseclass.__dict__:
+        classdict['_exportmethods'] = baseclass.__dict__['_exportmethods']
     cls = classobj(name, (taskclass, baseclass), classdict)
 
     global handler_map
@@ -80,12 +79,12 @@ class TaskApplication(object):
                         sj.application.transition_update(new_status)
 
                 if transform:
-                    transform._impl.setMasterJobStatus(
+                    stripProxy(transform).setMasterJobStatus(
                         self._getParent(), new_status)
 
             else:
                 if transform:
-                    transform._impl.setAppStatus(self, new_status)
+                    stripProxy(transform).setAppStatus(self, new_status)
 
         except Exception as x:
             import traceback

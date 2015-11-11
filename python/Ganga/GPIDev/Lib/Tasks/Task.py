@@ -77,14 +77,10 @@ class Task(GangaObject):
     def remove(self, remove_jobs="do_nothing"):
         """Delete the task"""
         if not remove_jobs in [True, False]:
-            logger.info("You want to remove the task %i named '%s'." %
-                        (self.id, self.name))
-            logger.info(
-                "Since this operation cannot be easily undone, please call this command again:")
-            logger.info(
-                " * as tasks(%i).remove(remove_jobs=True) if you want to remove all associated jobs," % (self.id))
-            logger.info(
-                " * as tasks(%i).remove(remove_jobs=False) if you want to keep the jobs." % (self.id))
+            logger.info("You want to remove the task %i named '%s'." % (self.id, self.name))
+            logger.info("Since this operation cannot be easily undone, please call this command again:")
+            logger.info(" * as tasks(%i).remove(remove_jobs=True) if you want to remove all associated jobs," % (self.id))
+            logger.info(" * as tasks(%i).remove(remove_jobs=False) if you want to keep the jobs." % (self.id))
             return
         if remove_jobs:
             for j in GPI.jobs:
@@ -92,7 +88,9 @@ class Task(GangaObject):
                     stid = j.application.tasks_id.split(":")
                     if int(stid[-2]) == self.id:
                         j.remove()
-                except Exception as x:
+                except Exception as err:
+                    logger.debug("Task remove_jobs task split Error!")
+                    logger.debug("Error:\n%s" % str(err))
                     pass
         self._getRegistry()._remove(self)
         logger.info("Task #%s deleted" % self.id)
@@ -110,8 +108,7 @@ class Task(GangaObject):
     def check(self):
         """This function is called by run() or manually by the user"""
         if self.status != "new":
-            logger.error(
-                "The check() function may modify a task and can therefore only be called on new tasks!")
+            logger.error("The check() function may modify a task and can therefore only be called on new tasks!")
             return
         try:
             for t in self.transforms:
@@ -127,8 +124,7 @@ class Task(GangaObject):
 
         if self.status != "completed":
             if self.float == 0:
-                logger.warning(
-                    "The 'float', the number of jobs this task may run, is still zero. Type 'tasks(%i).float = 5' to allow this task to submit 5 jobs at a time" % self.id)
+                logger.warning("The 'float', the number of jobs this task may run, is still zero. Type 'tasks(%i).float = 5' to allow this task to submit 5 jobs at a time" % self.id)
             try:
                 for tf in self.transforms:
                     if tf.status != "completed":
@@ -172,8 +168,7 @@ class Task(GangaObject):
     def insertTransform(self, id, tf):
         """Insert transfrm tf before index id (counting from 0)"""
         if self.status != "new" and id < len(self.transforms):
-            logger.error(
-                "You can only insert transforms at the end of the list. Only if a task is new it can be freely modified!")
+            logger.error("You can only insert transforms at the end of the list. Only if a task is new it can be freely modified!")
             return
         # self.transforms.insert(id,tf.copy()) # this would be safer, but
         # breaks user exspectations
@@ -212,7 +207,9 @@ class Task(GangaObject):
                             addjob(sj)
                     else:
                         addjob(j)
-            except Exception as x:
+            except Exception as err:
+                logger.debug("getJobs Error!!")
+                logger.debug("Error:\n%s" % str(err))
                 # print x
                 pass
         return JobRegistrySliceProxy(jobslice)
@@ -277,7 +274,7 @@ class Task(GangaObject):
 
     def table(self):
         from Ganga.GPI import tasks
-        logger.info(tasks[self.id:self.id + 1].table())
+        tasks[self.id:self.id].table()
 
     def overview(self):
         """ Get an ascii art overview over task status. Can be overridden """

@@ -30,6 +30,7 @@ def isProxy(obj):
 #    return isinstance(obj.__class__, GPIProxyObject)
     # Alex changed for below as doesn't check class objects, only instances
     # e.g. isProxy(DiracFile) fails at the Ganga prompt
+    global proxyRef
     if isclass(obj):
         return issubclass(obj, GPIProxyObject) or hasattr(obj, proxyRef)
     else:
@@ -63,8 +64,21 @@ def isType(_obj, type_or_seq):
     else:
         return isinstance(obj, bare_type_or_seq)
 
+def getName(obj):
+    if hasattr(obj, '_name'):
+        return obj._name
+    elif hasattr(obj, '__name__'):
+        return obj.__name__
+    else:
+        s_obj = stripProxy(obj)
+        if isclass(s_obj) or hasattr(s_obj, '__class__'):
+            return s_obj.__class__.__name__
+        else:
+            return str(obj)
+
 def stripProxy(obj):
     """Removes the proxy if there is one"""
+    global proxyRef
     if hasattr(obj, proxyRef):
         return getattr(obj, proxyRef)
     else:
@@ -106,8 +120,8 @@ def stripComponentObject(v, cfilter, item):
         if isType(v, GangaObject):
             return v
         if not isinstance(v, GPIProxyObject):
-            raise TypeMismatchError(
-                "cannot assign value '%s', expected a '%s' object " % (repr(v), item['category']))
+            raise TypeMismatchError("cannot assign value '%s', expected a '%s' object " % (repr(v), item['category']))
+        global proxyRef
         return getattr(v, proxyRef)
 
     vv = cfilter(v, item)
@@ -117,8 +131,7 @@ def stripComponentObject(v, cfilter, item):
         return vv
 
 from Ganga.GPIDev.TypeCheck import _valueTypeAllowed
-valueTypeAllowed = lambda val, valTypeList: _valueTypeAllowed(
-    val, valTypeList, logger)
+valueTypeAllowed = lambda val, valTypeList: _valueTypeAllowed(val, valTypeList, logger)
 
 
 class ProxyDataDescriptor(object):
@@ -127,6 +140,7 @@ class ProxyDataDescriptor(object):
         self._name = name
 
     def __get__(self, obj, cls):
+        global proxyRef
         # at class level return a helper object (for textual description)
         if obj is None:
             # return Schema.make_helper(getattr(getattr(cls, proxyRef),self._name))
@@ -166,7 +180,7 @@ class ProxyDataDescriptor(object):
                 return GPIProxyObjectFactory(v)
             return v
 
-        # wrap proxy
+        # wrap proxuy
         item = getattr(obj, proxyRef)._schema[self._name]
 
         if item['proxy_get']:
@@ -184,6 +198,7 @@ class ProxyDataDescriptor(object):
         return disguiser(val)
 
     def _check_type(self, obj, val):
+        global proxyRef
         item = getattr(obj, proxyRef)._schema[self._name]
         return item._check_type(val, self._name)
 
@@ -192,6 +207,7 @@ class ProxyDataDescriptor(object):
         # obj is the object we're about to make the change in
         # val is the value we're setting the attribute to.
         # item is the schema entry of the attribute we're about to change
+        global proxyRef
         item = getattr(obj, proxyRef)._schema[self._name]
         if item['protected']:
             raise ProtectedAttributeError(
@@ -264,6 +280,7 @@ class ProxyDataDescriptor(object):
             # just warn
             # print '**** checking',v,v.__class__,
             # isinstance(val,GPIProxyObject)
+            global proxyRef
             if isinstance(v, GPIProxyObject) or hasattr(v, proxyRef):
                 v = getattr(v, proxyRef)
                 logger.debug('%s property: assigned a component object (%s used)' % (self._name, proxyRef))
@@ -308,6 +325,7 @@ class ProxyMethodDescriptor(object):
         self._internal_name = internal_name
 
     def __get__(self, obj, cls):
+        global proxyRef
         if obj is None:
             return getattr(getattr(cls, proxyRef), self._internal_name)
         return getattr(getattr(obj, proxyRef), self._internal_name)
@@ -328,6 +346,7 @@ def GPIProxyObjectFactory(_obj):
         obj = _obj
 
     if obj._proxyObject is None:
+        global proxyRef
         cls = obj._proxyClass
         proxy = super(cls, cls).__new__(cls)
         # FIXME: NEW STYLE CLASS CAN DO __DICT__??
@@ -363,6 +382,7 @@ def GPIProxyClassFactory(name, pluginclass):
     # the new class
 
     def _init(self, *args, **kwds):
+        global proxyRef
         # if len(args) > 1:
         #    logger.warning('extra arguments in the %s constructor ignored: %s',name,args[1:])
 
@@ -408,6 +428,7 @@ def GPIProxyClassFactory(name, pluginclass):
     """)
 
     def _str(self):
+        global proxyRef
         import cStringIO
         sio = cStringIO.StringIO()
         getattr(self, proxyRef).printSummaryTree(0, 0, '', out=sio)
@@ -418,17 +439,36 @@ def GPIProxyClassFactory(name, pluginclass):
         if cycle:
             p.text('proxy object...')
             return
-        p.text(self._display(True))
+
+        global proxyRef
+
+        if hasattr(self, proxyRef):
+            raw_self = getattr(self, proxyRef)
+            if hasattr(raw_self, '_repr_pretty_'):
+                raw_self._repr_pretty_(p, cycle)
+            elif hasattr(raw_self, '_display'):
+                p.text(raw_self._display())
+            else:
+                p.text(self.__str__())
+        else:
+            p.text(self.__str__())
     helptext(_repr_pretty_, """Return a nice string to be printed in the IPython termial""")
 
     def _repr(self):
-        if hasattr(getattr(self, proxyRef), '_repr'):
-            return getattr(self, proxyRef)._repr()
+        global proxyRef
+        has_proxy = hasattr(self, proxyRef)
+        if has_proxy:
+            raw_proxy = getattr(self, proxyRef)
+        else:
+            raw_proxy = None
+        if has_proxy and hasattr(raw_proxy, '_repr'):
+            return raw_proxy._repr()
         else:
             return '<' + repr(getattr(self, proxyRef)) + ' PROXY at ' + hex(abs(id(self))) + '>'
     helptext(_repr, "Return an short representation of %(classname)s object.")
 
     def _eq(self, x):
+        global proxyRef
         result = False
         if isType(x, GPIProxyObject) or hasattr(x, proxyRef):
             result = getattr(self, proxyRef).__eq__(getattr(x, proxyRef))
@@ -438,6 +478,7 @@ def GPIProxyClassFactory(name, pluginclass):
     helptext(_eq, "Equality operator (==), compare the %(classname)s properties which are declared as [comparable].")
 
     def _ne(self, x):
+        global proxyRef
         result = True
         if isType(x, GPIProxyObject) or hasattr(x, proxyRef):
             result = getattr(self, proxyRef).__ne__(getattr(x, proxyRef))
@@ -447,6 +488,7 @@ def GPIProxyClassFactory(name, pluginclass):
     helptext(_ne, "Non-equality operator (!=).")
 
     def _copy(self, unprepare=None):
+        global proxyRef
         logger.debug('unprepare is %s', str(unprepare))
         if unprepare is None:
             if prepconfig['unprepare_on_copy'] is True:
@@ -505,6 +547,7 @@ def GPIProxyClassFactory(name, pluginclass):
 
     def _setattr(self, x, v):
         'something'
+        proxyRef
         # need to know about the types that require metadata attribute checking
         # this allows derived types to get same behaviour for free.
         if x == proxyRef:
@@ -541,7 +584,7 @@ Setting a [protected] or a unexisting property raises AttributeError.""")
 #        return object.__getattribute__(self,name)
 
     def _getattribute(self, name):
-
+        global proxyRef
         if name.startswith('__') or name in d.keys():
             return object.__getattribute__(self, name)
 
@@ -559,6 +602,7 @@ Setting a [protected] or a unexisting property raises AttributeError.""")
          '__init__': _init,
          '__str__': _str,
          '__repr__': _repr,
+         '_repr_pretty_': _repr_pretty_,
          '__eq__': _eq,
          '__ne__': _ne,
          'copy': _copy,
@@ -568,8 +612,6 @@ Setting a [protected] or a unexisting property raises AttributeError.""")
          '__getattribute__': _getattribute
          }
 
-    if hasattr(pluginclass, '_repr_pretty_'):
-        d['_repr_pretty_'] = _repr_pretty_
 
     # TODO: this makes GangaList inherit from the list
     # this is not tested and specifically the TestGangaList/testAllListMethodsExported should be verified

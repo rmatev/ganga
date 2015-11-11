@@ -5,6 +5,7 @@
 import os
 import re
 import fnmatch
+import time
 from Ganga.GPIDev.Schema import Schema, Version, SimpleItem, ComponentItem
 from Ganga.GPIDev.Adapters.IBackend import IBackend
 from Ganga.Core import BackendError, GangaException
@@ -15,7 +16,7 @@ from Ganga.Utility.ColourText import getColour
 from Ganga.Utility.Config import getConfig
 from Ganga.Utility.logging import getLogger
 from Ganga.GPIDev.Credentials2 import VomsProxy, require_credential, credential_store, needed_credentials
-from Ganga.GPIDev.Base.Proxy import stripProxy, isType
+from Ganga.GPIDev.Base.Proxy import stripProxy, isType, getName
 logger = getLogger()
 regex = re.compile('[*?\[\]]')
 
@@ -83,7 +84,7 @@ class DiracBase(IBackend):
                                 doc='DIRAC API commands to add the job definition script. Only edit '
                                 'if you *really* know what you are doing'),
         'settings': SimpleItem(defvalue={'CPUTime': 2 * 86400},
-                               doc='Settings for DIRAC job (e.g. CPUTime, BannedSites, etc.)')
+                               doc='Settings for DIRAC job (e.g. CPUTime, BannedSites, etc.)'),
         'credential_requirements': ComponentItem('CredentialRequirement', defvalue=VomsProxy()),
     })
     _exportmethods = ['getOutputData', 'getOutputSandbox', 'removeOutputData',
@@ -216,7 +217,7 @@ class DiracBase(IBackend):
         try:
             for sj in rjobs:
                 fqid = sj.getFQID('.')
-                logger.info("resubmitting job %s to %s backend", fqid, sj.backend._name)
+                logger.info("resubmitting job %s to %s backend", fqid, getName(sj.backend))
                 try:
                     b = sj.backend
                     sj.updateStatus('submitting')
@@ -229,7 +230,7 @@ class DiracBase(IBackend):
                         return handleError(IncompleteJobSubmissionError(fqid, 'resubmission failed'))
                 except Exception as x:
                     log_user_exception(
-                        logger, debug=isinstance(x, GangaException))
+                        logger, debug=isType(x, GangaException))
                     return handleError(IncompleteJobSubmissionError(fqid, str(x)))
         finally:
             master = self.getJobObject().master
@@ -245,19 +246,16 @@ class DiracBase(IBackend):
         """Resubmit a DIRAC job"""
         j = self.getJobObject()
         parametric = False
-        script_path = os.path.join(
-            j.getInputWorkspace().getPath(), 'dirac-script.py')
+        script_path = os.path.join(j.getInputWorkspace().getPath(), 'dirac-script.py')
         # Check old script
         if j.master is None and not os.path.exists(script_path):
-            raise BackendError(
-                'Dirac', 'No "dirac-script.py" found in j.inputdir')
+            raise BackendError('Dirac', 'No "dirac-script.py" found in j.inputdir')
 
         if j.master is not None and not os.path.exists(script_path):
             script_path = os.path.join(
                 j.master.getInputWorkspace().getPath(), 'dirac-script.py')
             if not os.path.exists(script_path):
-                raise BackendError(
-                    'Dirac', 'No "dirac-script.py" found in j.inputdir or j.master.inputdir')
+                raise BackendError('Dirac', 'No "dirac-script.py" found in j.inputdir or j.master.inputdir')
             parametric = True
 
         # Read old script
@@ -273,7 +271,9 @@ class DiracBase(IBackend):
                 if len(parametric_datasets) != len(j.master.subjobs):
                     raise BackendError('Dirac', 'number of parametric datasets defined in API script doesn\'t match number of master.subjobs')
             if j.inputdata and len(j.inputdata) > 0:
-                _input_files = [f for f in j.inputdata if not isinstance(f, DiracFile)]
+                _input_files = [f for f in j.inputdata if not isType(f, DiracFile)]
+            else:
+                _input_files = []
             if set(parametric_datasets[j.id]).symmetric_difference(set([f.namePattern for f in _input_files])):
                 raise BackendError(
                     'Dirac', 'Mismatch between dirac-script and job attributes.')
@@ -291,15 +291,18 @@ class DiracBase(IBackend):
                 _key = key[3:]
             else:
                 _key = key
-            new_script += '%s.set%s("%s")\n' % (job_ident,
-                                                str(_key), str(value))
+            if type(value) == type(''):
+                template = '%s.set%s("%s")\n'
+            else:
+                template = '%s.set%s(%s)\n'
+            new_script += template % (job_ident, str(_key), str(value))
         new_script += script[script.find('# user settings -->'):]
 
         # Save new script
-        new_script_filename = os.path.join(
-            j.getInputWorkspace().getPath(), 'dirac-script.py')
+        new_script_filename = os.path.join(j.getInputWorkspace().getPath(), 'dirac-script.py')
         f = open(new_script_filename, 'w')
         f.write(new_script)
+        f.flush()
         f.close()
         return self._common_submit(new_script_filename)
 
@@ -356,12 +359,11 @@ class DiracBase(IBackend):
             logger.error("No peeking available for Dirac job '%i'.", self.id)
 
     @require_credential
-    def getOutputSandbox(self,dir=None):
+    def getOutputSandbox(self,outputDir=None):
         j = self.getJobObject()
-        if dir is None:
-            dir = j.getOutputWorkspace().getPath()
-        dirac_cmd = "getOutputSandbox(%d,'%s')" \
-                    % (self.id,dir)
+        if outputDir is None:
+            outputDir = j.getOutputWorkspace().getPath()
+        dirac_cmd = "getOutputSandbox(%d,'%s')"  % (self.id, outputDir)
         result = execute(dirac_cmd, cred_req=self.credential_requirements)
         if not result_ok(result):
             msg = 'Problem retrieving output: %s' % str(result)
@@ -383,7 +385,7 @@ class DiracBase(IBackend):
         else:
             outputfiles_foreach(j, DiracFile, lambda x: x.remove())
 
-    def getOutputData(self, dir=None, names=None, force=False):
+    def getOutputData(self, outputDir=None, names=None, force=False):
         """Retrieve data stored on SE to dir (default=job output workspace).
         If names=None, then all outputdata is downloaded otherwise names should
         be a list of files to download. If force=True then data will be redownloaded
@@ -396,16 +398,15 @@ class DiracBase(IBackend):
         will avoid overwriting files with the same name from each subjob.
         """
         j = self.getJobObject()
-        if dir is not None and not os.path.isdir(dir):
-            raise GangaException(
-                "Designated outupt path '%s' must exist and be a directory" % dir)
+        if outputDir is not None and not os.path.isdir(outputDir):
+            raise GangaException("Designated outupt path '%s' must exist and be a directory" % outputDir)
 
         def download(dirac_file, job, is_subjob=False):
             dirac_file.localDir = job.getOutputWorkspace().getPath()
-            if dir is not None:
-                output_dir = dir
+            if outputDir is not None:
+                output_dir = outputDir
                 if is_subjob:
-                    output_dir = os.path.join(dir, job.fqid)
+                    output_dir = os.path.join(outputDir, job.fqid)
                     if not os.path.isdir(output_dir):
                         os.mkdir(output_dir)
                 dirac_file.localDir = output_dir
@@ -453,7 +454,8 @@ class DiracBase(IBackend):
             import datetime
             try:
                 result = eval(result)
-            except:
+            except Exception as err:
+                logger.debug("Exception, err: %s" % str(err))
                 pass
         if not result_ok(result):
             logger.warning('Could not obtain services: %s' % str(result))
@@ -543,7 +545,7 @@ class DiracBase(IBackend):
         # malformed job output?
 
     @staticmethod
-    def job_finalisation(job, updated_dirac_status):
+    def _internal_job_finalisation(job, updated_dirac_status):
 
         logger = getLogger()
 
@@ -554,6 +556,7 @@ class DiracBase(IBackend):
                 return
             if (job.master and job.master.status in ['removed', 'killed']):
                 return  # user changed it under us
+
             job.updateStatus('completing')
             if job.master:
                 job.master.updateMasterJobStatus()
@@ -573,7 +576,7 @@ class DiracBase(IBackend):
             # Set DiracFile metadata
             wildcards = [f.namePattern for f in job.outputfiles.get(DiracFile) if regex.search(f.namePattern) is not None]
 
-            with open(os.path.join(job.getOutputWorkspace().getPath(), getConfig('Output')['PostProcessLocationsFileName']), 'wb') as postprocesslocationsfile:
+            with open(os.path.join(job.getOutputWorkspace().getPath(), getConfig('Output')['PostProcessLocationsFileName']), 'ab') as postprocesslocationsfile:
                 if not hasattr(file_info_dict, 'keys'):
                     logger.error("Error understanding OutputDataInfo: %s" % str(file_info_dict))
                     from Ganga.Core.exceptions import GangaException
@@ -648,7 +651,31 @@ class DiracBase(IBackend):
             if getConfig('DIRAC')['failed_sandbox_download']:
                 execute("getOutputSandbox(%d,'%s')" % (job.backend.id, job.getOutputWorkspace().getPath()), cred_req=job.backend.credential_requirements)
         else:
-            logger.error("Unexpected dirac status '%s' encountered"%updated_dirac_status)
+            logger.error("Unexpected dirac status '%s' encountered" % updated_dirac_status)
+
+    @staticmethod
+    def job_finalisation(job, updated_dirac_status):
+
+        count = 1
+        limit = 5
+        sleep_length = 2.5
+
+        while count != limit:
+
+            try:
+                count += 1
+                DiracBase._internal_job_finalisation(job, updated_dirac_status)
+                break
+            except Exception as err:
+
+                logger.warning("An error occured finalising job: %s" % job.getFQID('.'))
+                logger.warning("Attemting again (%s of %s) after %s-sec delay" % (str(count), str(limit), str(sleep_length)))
+                if count == limit:
+                    logger.error("Unable to finalise job after %s retries due to error:\n%s" % (job.getFQID('.'), str(err)))
+                    job.force_status('failed')
+                    raise err
+
+            time.sleep(sleep_length)
 
     @staticmethod
     def updateMonitoringInformation(_jobs):
@@ -773,7 +800,8 @@ class DiracBase(IBackend):
                 if (job.master and job.master.status in ['removed', 'killed']):
                     continue  # user changed it under us
                 job.updateStatus(updated_dirac_status)
-                if job.master: job.master.updateMasterJobStatus()
+                if job.master:
+                    job.master.updateMasterJobStatus()
 
 #\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\#
 

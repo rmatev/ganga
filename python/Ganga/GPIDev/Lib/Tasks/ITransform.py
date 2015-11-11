@@ -12,6 +12,7 @@ import Ganga.GPI as GPI
 import time
 import os
 from Ganga.GPIDev.Lib.Tasks.ITask import addInfoString
+from Ganga.GPIDev.Base.Proxy import isType
 
 class ITransform(GangaObject):
     _schema = Schema(Version(1, 0), {
@@ -27,7 +28,6 @@ class ITransform(GangaObject):
         'unit_merger': ComponentItem('mergers', defvalue=None, load_default=0, optional=1, doc='Merger to be copied and run on each unit separately.'),
         'copy_output': ComponentItem('datasets', defvalue=None, load_default=0, optional=1, doc='The dataset to copy all units output to, e.g. Grid dataset -> Local Dataset'),
         'unit_copy_output': ComponentItem('datasets', defvalue=None, load_default=0, optional=1, doc='The dataset to copy each individual unit output to, e.g. Grid dataset -> Local Dataset'),
-        'unit_merger': ComponentItem('mergers', defvalue=None, load_default=0, optional=1, doc='Merger to be run copied and run on each unit separately.'),
         'run_limit': SimpleItem(defvalue=8, doc='Number of times a partition is tried to be processed.', protected=1, typelist=["int"]),
         'minor_run_limit': SimpleItem(defvalue=3, doc='Number of times a unit can be resubmitted', protected=1, typelist=["int"]),
         'major_run_limit': SimpleItem(defvalue=3, doc='Number of times a junit can be rebrokered', protected=1, typelist=["int"]),
@@ -45,6 +45,7 @@ OutputFile objects to be copied to all jobs"),
         'submit_with_threads': SimpleItem(defvalue=False, doc='Use Ganga Threads for submission'),
         'max_active_threads': SimpleItem(defvalue=10, doc='Maximum number of Ganga Threads to use. Note that the number of simultaneous threads is controlled by the queue system (default is 5)'),
         'info' : SimpleItem(defvalue=[],typelist=['str'],protected=1,sequence=1,doc="Info showing status transitions and unit info"),
+        'id': SimpleItem(defvalue=-1, protected=1, doc='ID of the Transform', typelist=["int"]),
         #'force_single_unit' : SimpleItem(defvalue=False, doc='Force all input data into one Unit'),
     })
 
@@ -173,11 +174,16 @@ OutputFile objects to be copied to all jobs"),
 
     def getID(self):
         """Return the index of this trf in the parent task"""
-        task = self._getParent()
-        if not task:
-            raise ApplicationConfigurationError(
-                None, "This transform has not been associated with a task and so there is no ID available")
-        return task.transforms.index(self)
+
+        # if the id isn't already set, use the index from the parent Task
+        if self.id < 0:
+            task = self._getParent()
+            if not task:
+                raise ApplicationConfigurationError(
+                    None, "This transform has not been associated with a task and so there is no ID available")
+            self.id = task.transforms.index(self)
+        
+        return self.id
 
     def run(self, check=True):
         """Sets this transform to running status"""
@@ -252,9 +258,10 @@ OutputFile objects to be copied to all jobs"),
 
             unit_status_list.append(unit.status)
 
+        from Ganga.GPIDev.Lib.Tasks.TaskChainInput import TaskChainInput
         # check for any TaskChainInput completions
         for ds in self.inputdata:
-            if ds._name == "TaskChainInput" and ds.input_trf_id != -1:
+            if isType(ds, TaskChainInput) and ds.input_trf_id != -1:
                 if task.transforms[ds.input_trf_id].status != "completed":
                     return 0
 
@@ -271,9 +278,10 @@ OutputFile objects to be copied to all jobs"),
     def createUnits(self):
         """Create new units if required given the inputdata"""
 
+        from Ganga.GPIDev.Lib.Tasks.TaskChainInput import TaskChainInput
         # check for chaining
         for ds in self.inputdata:
-            if ds._name == "TaskChainInput" and ds.input_trf_id != -1:
+            if isType(ds, TaskChainInput) and ds.input_trf_id != -1:
 
                 # check for single unit
                 if ds.single_unit:
@@ -360,13 +368,14 @@ OutputFile objects to be copied to all jobs"),
     def validate(self):
         """Override this to validate that the transform is OK"""
 
+        from Ganga.GPIDev.Lib.Tasks.TaskLocalCopy import TaskLocalCopy
         # make sure a path has been selected for any local downloads
-        if self.unit_copy_output != None and self.unit_copy_output._name == "TaskLocalCopy":
+        if self.unit_copy_output != None and isType(self.unit_copy_output, TaskLocalCopy):
             if self.unit_copy_output.local_location == '':
                 logger.error("No path selected for Local Output Copy")
                 return False
 
-        if self.copy_output != None and self.copy_output._name == "TaskLocalCopy":
+        if self.copy_output != None and isType(self.copy_output, TaskLocalCopy):
             if self.copy_output.local_location == '':
                 logger.error("No path selected for Local Output Copy")
                 return False
@@ -378,8 +387,7 @@ OutputFile objects to be copied to all jobs"),
     def addUnitToTRF(self, unit, prev_unit=None):
         """Add a unit to this Transform given the input and output data"""
         if not unit:
-            raise ApplicationConfigurationError(None, "addUnitTOTRF failed for Transform %d (%s): No unit specified" %
-                                                (self.getID(), self.name))
+            raise ApplicationConfigurationError(None, "addUnitTOTRF failed for Transform %d (%s): No unit specified" % (self.getID(), self.name))
 
         addInfoString( self, "Adding Unit to TRF...")
         unit.updateStatus("hold")
@@ -389,6 +397,7 @@ OutputFile objects to be copied to all jobs"),
             self.units[prev_unit.getID()] = unit
         else:
             self.units.append(unit)
+            stripProxy(unit).id = len(self.units) - 1
 
 # Information methods
     def fqn(self):
@@ -408,8 +417,7 @@ OutputFile objects to be copied to all jobs"),
         return sum([u.n_status(status) for u in self.units])
 
     def info(self):
-        logger.info(markup(
-            "%s '%s'" % (self.__class__.__name__, self.name), status_colours[self.status]))
+        logger.info(markup("%s '%s'" % (self.__class__.__name__, self.name), status_colours[self.status]))
         logger.info("* backend: %s" % self.backend.__class__.__name__)
         logger.info("Application:")
         self.application.printTree()
@@ -421,9 +429,9 @@ OutputFile objects to be copied to all jobs"),
     def createUnitCopyOutputDS(self, unit_id):
         """Create a the Copy Output dataset to use with this unit. Overload to handle more than the basics"""
 
-        if self.unit_copy_output._name != "TaskLocalCopy":
-            logger.warning(
-                "Default implementation of createUnitCopyOutputDS can't handle datasets of type '%s'" % self.unit_copy_output._name)
+        from Ganga.GPIDev.Lib.Tasks.TaskLocalCopy import TaskLocalCopy
+        if isType(self.unit_copy_output, TaskLocalCopy):
+            logger.warning("Default implementation of createUnitCopyOutputDS can't handle datasets of type '%s'" % self.unit_copy_output._name)
             return
 
         # create copies of the Copy Output DS and add Unit name to path
@@ -540,9 +548,10 @@ OutputFile objects to be copied to all jobs"),
         """return the include/exclude masks from the TaskChainInput"""
         incl_pat_list = []
         excl_pat_list = []
+        from Ganga.GPIDev.Lib.Tasks.TaskChainInput import TaskChainInput
         for parent in parent_units:
             for inds in self.inputdata:
-                if inds._name == "TaskChainInput" and inds.input_trf_id == parent._getParent().getID():
+                if isType(inds, TaskChainInput) and inds.input_trf_id == parent._getParent().getID():
                     incl_pat_list += inds.include_file_mask
                     excl_pat_list += inds.exclude_file_mask
 
@@ -568,5 +577,6 @@ OutputFile objects to be copied to all jobs"),
                     logger.warning("Removing job '%d'..." % jid)
                     job = GPI.jobs(jid)
                     job.remove()
-                except:
+                except Exception as err:
+                    logger.debug("removeUnused: %s" % str(err))
                     logger.error("Problem removing job '%d'" % jid)

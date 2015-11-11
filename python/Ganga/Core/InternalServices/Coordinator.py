@@ -31,6 +31,7 @@
 """
 from Ganga.Utility.Config import getConfig
 from Ganga.Utility.logging import getLogger
+from Ganga.GPIDev.Base.Proxy import getName
 
 from Ganga.GPIDev.Credentials2 import credential_store, AfsToken
 
@@ -49,10 +50,10 @@ def isCredentialRequired(credObj):
     from Ganga.Runtime import Workspace_runtime
     from Ganga.Runtime import Repository_runtime
 
-    if credObj.__class__.__name__ == 'AfsToken':
+    if getName(credObj) == 'AfsToken':
         return Workspace_runtime.requiresAfsToken() or Repository_runtime.requiresAfsToken()
 
-    if credObj.__class__.__name__ == 'GridProxy':
+    if getName(credObj) == 'GridProxy':
         if Repository_runtime.requiresGridProxy() or Workspace_runtime.requiresGridProxy():
             return True
         from Ganga.GPI import jobs, typename
@@ -75,24 +76,23 @@ def notifyInvalidCredential(credObj):
     # ignore this notification if the internal services are already stopped
     if not servicesEnabled:
         log.debug(
-            "One of the monitored credential [%s] is invalid BUT the internal services are already disabled." % credObj._name)
+            "One of the monitored credential [%s] is invalid BUT the internal services are already disabled." % getName(credObj))
         return
 
     if isCredentialRequired(credObj):
         log.debug("One of the required credential for the internal services is invalid: [%s]."
-                  "Disabling internal services ..." % credObj._name)
+                  "Disabling internal services ..." % getName(credObj))
         _tl = credObj.timeleft()
         if _tl == "-1":
-            log.error('%s has been destroyed! Could not shutdown internal services.' % credObj._name)
+            log.error('%s has been destroyed! Could not shutdown internal services.' % getName(credObj))
             return
         disableInternalServices()
         log.warning('%s is about to expire! '
                     'To protect against possible write errors all internal services has been disabled.'
                     'If you believe the problem has been solved type "reactivate()" to re-enable '
-                    'interactions within this session.' % credObj._name)
+                    'interactions within this session.' % getName(credObj))
     else:
-        log.debug(
-            "One of the monitored credential [%s] is invalid BUT it is not required by the internal services" % credObj._name)
+        log.debug("One of the monitored credential [%s] is invalid BUT it is not required by the internal services" % getName(credObj))
 
 
 def _diskSpaceChecker():
@@ -144,7 +144,7 @@ def _diskSpaceChecker():
     return True
 
 
-def disableMonitoringService():
+def disableMonitoringService(shutdown=False):
 
     # disable the mon loop
     log.debug("Shutting down the main monitoring loop")
@@ -155,23 +155,24 @@ def disableMonitoringService():
     from Ganga.Core import monitoring_component
     monitoring_component.disableMonitoring()
 
-    from Ganga.GPI import queues
-    queues._purge_all()
-    first = 0
-    while queues.totalNumAllThreads() != 0:
-        log.debug("Ensuring that all tasks are purged from the todo!")
-        if first is not 0:
-            import time
-            time.sleep(1)
+    if not shutdown:
+        from Ganga.GPI import queues
         queues._purge_all()
-        queues._stop_all_threads()
-        from Ganga.Core.GangaThread.GangaThreadPool import GangaThreadPool
-        pool = GangaThreadPool.getInstance()
-        pool.shutdown()
-        pool.__do_shutdown__()
-        first = 1
-
-    log.debug("Queues Threads should now be gone")
+        first = 0
+        while queues.totalNumAllThreads() != 0:
+            log.debug("Ensuring that all tasks are purged from the todo!")
+            if first is not 0:
+                import time
+                time.sleep(0.5)
+            queues._purge_all()
+            queues._stop_all_threads()
+            from Ganga.Core.GangaThread.GangaThreadPool import GangaThreadPool
+            pool = GangaThreadPool.getInstance()
+            pool.shutdown()
+            pool.__do_shutdown__()
+            first = 1
+        
+        log.debug("Queues Threads should now be gone")
 
 
 def disableInternalServices(shutdown=False):
@@ -205,7 +206,7 @@ def disableInternalServices(shutdown=False):
     log.debug("Disabling the internal services")
 
     # disable the mon loop
-    disableMonitoringService()
+    disableMonitoringService( shutdown )
 
     # For debugging what services are still alive after being requested to stop before we close the repository
     #from Ganga.Core.MonitoringComponent.Local_GangaMC_Service import getStackTrace

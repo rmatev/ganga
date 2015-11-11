@@ -10,7 +10,7 @@ from Ganga.Utility.Config import getConfig, ConfigError
 import Ganga.Utility.logging
 from LHCbDatasetUtils import isLFN, isPFN, isDiracFile, strToDataFile, getDataFile
 from OutputData import OutputData
-from Ganga.GPIDev.Base.Proxy import isType, stripProxy, GPIProxyObjectFactory
+from Ganga.GPIDev.Base.Proxy import isType, stripProxy, GPIProxyObjectFactory, getName
 from Ganga.GPIDev.Lib.Job.Job import Job, JobTemplate
 from GangaDirac.Lib.Backends.DiracUtils import get_result
 from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList, makeGangaListByRef
@@ -48,6 +48,7 @@ class LHCbDataset(GangaDataset):
     docstr = 'Specify the dataset persistency technology'
     schema['persistency'] = SimpleItem(
         defvalue=None, typelist=['str', 'type(None)'], doc=docstr)
+    schema['treat_as_inputfiles'] = SimpleItem(defvalue=False, doc="Treat the inputdata as inputfiles, i.e. copy the inputdata to the WN")
 
     _schema = Schema(Version(3, 0), schema)
     _category = 'datasets'
@@ -59,14 +60,16 @@ class LHCbDataset(GangaDataset):
                       'symmetricDifference', 'union', 'bkMetadata',
                       'isEmpty', 'hasPFNs', 'getPFNs']  # ,'pop']
 
-    def __init__(self, files=[], persistency=None, depth=0):
+    def __init__(self, files=None, persistency=None, depth=0):
+        if files is None:
+            files = []
         new_files = GangaList()
         if isType(files, LHCbDataset):
             for this_file in files:
                 new_files.append(copy.deepcopy(this_file))
         elif isType(files, IGangaFile):
             new_files.append(copy.deepcopy(this_file))
-        elif type(files) == type([]):
+        elif type(files) == type([]) or type( stripProxy( files ) ) == type(GangaList()):
             for this_file in files:
                 if type(this_file) == type(''):
                     new_files.append(string_datafile_shortcut_lhcb(this_file, None), False)
@@ -175,34 +178,37 @@ class LHCbDataset(GangaDataset):
                 return True
         return False
 
-    def replicate(self, destSE='', srcSE='', locCache=''):
+    def replicate(self, destSE=''):
         '''Replicate all LFNs to destSE.  For a list of valid SE\'s, type
         ds.replicate().'''
+
         if not destSE:
             from Ganga.GPI import DiracFile
             DiracFile().replicate('')
             return
         if not self.hasLFNs():
             raise GangaException('Cannot replicate dataset w/ no LFNs.')
+
         retry_files = []
+
         for f in self.files:
             if not isDiracFile(GPIProxyObjectFactory(f)):
                 continue
             try:
-                result = f.replicate(destSE, srcSE, locCache)
-            except:
-                msg = 'Replication error for file %s (will retry in a bit).'\
-                      % f.lfn
+                result = f.replicate( destSE=destSE )
+            except Exception as err:
+                msg = 'Replication error for file %s (will retry in a bit).' % f.lfn
                 logger.warning(msg)
+                logger.warning("Error: %s" % str(err))
                 retry_files.append(f)
+
         for f in retry_files:
             try:
-                result = f.replicate(destSE, srcSE, locCache)
-            except:
-                msg = '2nd replication attempt failed for file %s.' \
-                      ' (will not retry)' % f.lfn
+                result = f.replicate( destSE=destSE )
+            except Exception as err:
+                msg = '2nd replication attempt failed for file %s. (will not retry)' % f.lfn
                 logger.warning(msg)
-                logger.warning(str(result))
+                logger.warning(str(err))
 
     def append(self, input_file):
         self.extend([input_file])
@@ -213,7 +219,7 @@ class LHCbDataset(GangaDataset):
         from Ganga.GPIDev.Base import ReadOnlyObjectError
 
         if self._parent is not None and self._parent._readonly():
-            raise ReadOnlyObjectError('object Job#%s  is read-only and attribute "%s/inputdata" cannot be modified now' % (self._parent.id, self._name))
+            raise ReadOnlyObjectError('object Job#%s  is read-only and attribute "%s/inputdata" cannot be modified now' % (self._parent.id, getName(self)))
 
         _external_files = []
 
@@ -407,9 +413,18 @@ class LHCbDataset(GangaDataset):
             else:
                 return snew + sdatasetsnew + sold + sdatasetsold
 
+    def _checkOtherFiles(self, other ):
+        if isType(other, GangaList) or isType(other, []):
+            other_files = LHCbDataset(other).getFullFileNames()
+        elif isType(other, LHCbDataset):
+            other_files = other.getFullFileNames()
+        else:
+            raise GangaException("Unknown type for difference")
+        return other_files
+
     def difference(self, other):
         '''Returns a new data set w/ files in this that are not in other.'''
-        other_files = other.getFullFileNames()
+        other_files = self._checkOtherFiles(other)
         files = set(self.getFullFileNames()).difference(other_files)
         data = LHCbDataset()
         data.__construct__([list(files)])
@@ -418,16 +433,18 @@ class LHCbDataset(GangaDataset):
 
     def isSubset(self, other):
         '''Is every file in this data set in other?'''
-        return set(self.getFileNames()).issubset(other.getFileNames())
+        other_files = self._checkOtherFiles(other)
+        return set(self.getFileNames()).issubset(other_files)
 
     def isSuperset(self, other):
         '''Is every file in other in this data set?'''
-        return set(self.getFileNames()).issuperset(other.getFileNames())
+        other_files = self._checkOtherFiles(other)
+        return set(self.getFileNames()).issuperset(other_files)
 
     def symmetricDifference(self, other):
         '''Returns a new data set w/ files in either this or other but not
         both.'''
-        other_files = other.getFullFileNames()
+        other_files = other.checkOtherFiles(other)
         files = set(self.getFullFileNames()).symmetric_difference(other_files)
         data = LHCbDataset()
         data.__construct__([list(files)])
@@ -436,7 +453,7 @@ class LHCbDataset(GangaDataset):
 
     def intersection(self, other):
         '''Returns a new data set w/ files common to this and other.'''
-        other_files = other.getFullFileNames()
+        other_files = other._checkOtherFiles(other)
         files = set(self.getFullFileNames()).intersection(other_files)
         data = LHCbDataset()
         data.__construct__([list(files)])
@@ -445,7 +462,8 @@ class LHCbDataset(GangaDataset):
 
     def union(self, other):
         '''Returns a new data set w/ files from this and other.'''
-        files = set(self.getFullFileNames()).union(other.getFullFileNames())
+        other_files = self._checkOtherFiles(other)
+        files = set(self.getFullFileNames()).union(other_files)
         data = LHCbDataset()
         data.__construct__([list(files)])
         data.depth = self.depth
@@ -453,8 +471,7 @@ class LHCbDataset(GangaDataset):
 
     def bkMetadata(self):
         'Returns the bookkeeping metadata for all LFNs. '
-        logger.info(
-            "Using BKQuery(bkpath).getDatasetMetadata() with bkpath=the bookkeeping path, will yeild more metadata such as 'TCK' info...")
+        logger.info("Using BKQuery(bkpath).getDatasetMetadata() with bkpath=the bookkeeping path, will yeild more metadata such as 'TCK' info...")
         cmd = 'bkMetaData(%s)' % self.getLFNs()
         b = get_result(cmd, 'Error removing replica', 'Replica rm error.')
         return b

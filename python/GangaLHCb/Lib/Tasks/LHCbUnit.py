@@ -1,3 +1,4 @@
+from Ganga.GPIDev.Base.Proxy import isType
 from Ganga.GPIDev.Schema import Schema, Version, SimpleItem
 from Ganga.GPIDev.Lib.Tasks.IUnit import IUnit
 from Ganga.GPIDev.Lib.Job.Job import JobError
@@ -7,7 +8,7 @@ from Ganga.GPIDev.Base.Proxy import addProxy, stripProxy
 from GangaLHCb.Lib.Splitters.SplitByFiles import SplitByFiles
 from Ganga.GPIDev.Base.Proxy import addProxy
 import Ganga.GPI as GPI
-
+from Ganga.GPIDev.Lib.Tasks.common import logger
 
 class LHCbUnit(IUnit):
     _schema = Schema(Version(1, 0), dict(IUnit._schema.datadict.items() + {
@@ -22,12 +23,12 @@ class LHCbUnit(IUnit):
         """Create any jobs required for this unit"""
         import copy
         j = GPI.Job()
-        j._impl.backend = self._getParent().backend.clone()
-        j._impl.application = self._getParent().application.clone()
+        stripProxy(j).backend = self._getParent().backend.clone()
+        stripProxy(j).application = self._getParent().application.clone()
         if self.inputdata:
             j.inputdata = self.inputdata.clone()
 
-        j._impl.inputfiles = copy.deepcopy(self._getParent().inputfiles)
+        stripProxy(j).inputfiles = copy.deepcopy(self._getParent().inputfiles)
 
         trf = self._getParent()
         task = trf._getParent()
@@ -42,7 +43,8 @@ class LHCbUnit(IUnit):
             j.splitter = trf.splitter.clone()
 
             # change the first event for GaussSplitter
-            if trf.splitter._name == "GaussSplitter":
+            from Ganga.GPI import GaussSplitter
+            if isType(trf.splitter, GaussSplitter):
                 events_per_unit = j.splitter.eventsPerJob * \
                     j.splitter.numberOfJobs
                 j.splitter.firstEventNumber = self.getID() * events_per_unit

@@ -20,12 +20,13 @@ from copy import deepcopy
 
 import Ganga.GPIDev.Schema as Schema
 
-from Ganga.GPIDev.Base.Proxy import GPIProxyClassFactory, ProxyDataDescriptor, ProxyMethodDescriptor, GangaAttributeError, TypeMismatchError, isType, stripProxy, GPIProxyObjectFactory
+from Ganga.GPIDev.Base.Proxy import GPIProxyClassFactory, ProxyDataDescriptor, ProxyMethodDescriptor, GangaAttributeError, TypeMismatchError, isType, stripProxy, GPIProxyObjectFactory, getName
 from Ganga.Core.exceptions import GangaValueError, GangaException
 
 from Ganga.GPIDev.Base.VPrinter import VPrinter, VSummaryPrinter
 
 from Ganga.Utility.Plugin import allPlugins
+
 
 logger = Ganga.Utility.logging.getLogger(modulename=1)
 
@@ -74,7 +75,7 @@ class Node(object):
         cls = type(self)
         obj = super(cls, cls).__new__(cls)
         # FIXME: this is different than for deepcopy... is this really correct?
-        d = self.__dict__.copy()
+        d = self.__dict__.copy(memo)
         obj.__dict__ = d
         return obj
 
@@ -170,7 +171,9 @@ class Node(object):
     # copy all the properties recursively from the srcobj
     # if schema of self and srcobj are not compatible raises a ValueError
     # ON FAILURE LEAVES SELF IN INCONSISTENT STATE
-    def copyFrom(self, srcobj, _ignore_atts=[]):
+    def copyFrom(self, srcobj, _ignore_atts=None):
+        if _ignore_atts is None:
+            _ignore_atts = []
         _srcobj = stripProxy(srcobj)
         # Check if this object is derived from the source object, then the copy
         # will not throw away information
@@ -195,7 +198,7 @@ class Node(object):
                 if _srcobj.application.is_prepared is not None and not _srcobj.application.is_prepared is True:
                     _srcobj.application.incrementShareCounter(_srcobj.application.is_prepared.name)
             if not self._schema.hasAttribute(name):
-                #raise ValueError('copyFrom: incompatible schema: source=%s destination=%s'%(_srcobj._name,self._name))
+                #raise ValueError('copyFrom: incompatible schema: source=%s destination=%s'%(getName(_srcobj),getName(self)))
                 setattr(self, name, self._schema.getDefaultValue(name))
             elif not item['copyable']:
                 setattr(self, name, self._schema.getDefaultValue(name))
@@ -289,11 +292,11 @@ class Descriptor(object):
 
     def _check_getter(self):
         if self._getter_name:
-            raise AttributeError('cannot modify or delete "%s" property (declared as "getter")' % self._name)
+            raise AttributeError('cannot modify or delete "%s" property (declared as "getter")' % getName(self))
 
     def __get__(self, obj, cls):
         if obj is None:
-            return cls._schema[self._name]
+            return cls._schema[getName(self)]
         else:
             result = None
             g = self._bind_method(obj, self._getter_name)
@@ -305,8 +308,8 @@ class Descriptor(object):
 
                 try:
                     if obj._index_cache:
-                        if self._name in obj._index_cache.keys():
-                            lookup_result = obj._index_cache[self._name]
+                        if getName(self) in obj._index_cache.keys():
+                            lookup_result = obj._index_cache[getName(self)]
                 except Exception, err:
                     logger.debug("Lazy Loading Exception: %s" % str(err))
                     lookup_result = None
@@ -317,48 +320,71 @@ class Descriptor(object):
                         result = lookup_result
                     else:
                         obj._getReadAccess()
-                        if self._name in obj._data:
-                            result = obj._data[self._name]
+                        if getName(self) in obj._data:
+                            result = obj._data[getName(self)]
                         else:
                             from Ganga.GPIDev.Base.Proxy import isProxy
                             if isProxy(obj._data):
-                                if self._name in stripProxy(self._data):
-                                    result = stripProxy(obj._data)[self._name]
+                                if getName(self) in stripProxy(self._data):
+                                    result = stripProxy(obj._data)[getName(self)]
                                 else:
-                                    logger.debug("Error, cannot find %s parameter in %s" % (self._name, obj._name))
-                                    GangaException("Error, cannot find %s parameter in %s" % (self._name, obj._name))
-                                    result = obj._data[self._name]
+                                    logger.debug("Error, cannot find %s parameter in %s" % (getName(self), getName(obj)))
+                                    GangaException("Error, cannot find %s parameter in %s" % (getName(self), getName(obj)))
+                                    result = obj._data[getName(self)]
                             else:
-                                logger.debug("Error, cannot find %s parameter in %s" % (self._name, obj._name))
-                                GangaException("Error, cannot find %s parameter in %s" % (self._name, obj._name))
-                                result = obj._data[self._name]
+                                logger.debug("Error, cannot find %s parameter in %s" % (getName(self), getName(obj)))
+                                GangaException("Error, cannot find %s parameter in %s" % (getName(self), getName(obj)))
+                                result = obj._data[getName(self)]
                 else:
-                    err = GangaException("Error finding parameter %s in object %s" % (str(self._name, obj._name)))
+                    err = GangaException("Error finding parameter %s in object %s" % (str(getName(self), getName(obj))))
                     raise err
 
             return result
 
     def __cloneVal(self, v, obj):
 
-        item = obj._schema[self._name]
+        item = obj._schema[getName(self)]
 
         if v is None:
-            assert(item['optional'])
+            if item.hasProperty('category'):
+                assertion = item['optional'] and (item['category'] != 'internal')
+            else:
+                assertion = item['optional']
+            assert(assertion)
             return None
+        elif isinstance(v, str):
+            return str(v)
+        elif isinstance(v, int):
+            return int(v)
         else:
+            if not isType(v, Node) and isType(v, list):
+                try:
+                    from Ganga.GPI import GangaList
+                    new_v = GangaList()
+                except ImportError:
+                    new_v = []
+                for elem in v:
+                    new_v.append(self.__cloneVal(elem, obj))
+                v = new_v
+            if not isType(v, Node):
+                raise GangaException("Error: found Object: %s of type: %s expected an object inheriting from Node!" % (str(v), str(type(v))))
+
             bare_v = stripProxy(v)
-            assert(isType(v, Node))
             from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList
             if isType(v, GangaList):
                 categories = v.getCategory()
                 len_cat = len(categories)
-                if (len_cat > 1) or ((len_cat == 1) and (categories[0] != item['category'])):
+                if (len_cat > 1) or ((len_cat == 1) and (categories[0] != item['category'])) and item['category'] != 'internal':
                     # we pass on empty lists, as the catagory is yet to be defined
-                    raise GangaAttributeError('%s: attempt to assign a list containing incompatible objects %s to the property in category "%s"' % (self._name, v, item['category']))
+                    raise GangaAttributeError('%s: attempt to assign a list containing incompatible objects %s to the property in category "%s"' % (getName(self), v, item['category']))
             else:
-                if bare_v._category != item['category']:
-                    raise GangaAttributeError('%s: attempt to assign an incompatible object %s to the property in category "%s"' % (self._name, v, item['category']))
-            v = bare_v.clone()
+                if bare_v._category != item['category'] and item['category'] != 'internal':
+                    raise GangaAttributeError('%s: attempt to assign an incompatible object %s to the property in category "%s"' % (getName(self), v, item['category']))
+            if hasattr(bare_v, 'clone'):
+                v = bare_v.clone()
+            else:
+                import copy
+                v = copy.deepcopy(bare_v)
             v._setParent(obj)
             return v
 
@@ -381,10 +407,16 @@ class Descriptor(object):
 
         # self._check_getter()
 
-        item = stripProxy(obj._schema[self._name])
+        item = stripProxy(obj._schema[getName(self)])
 
         def cloneVal(v):
-            return self.__cloneVal(v, obj)
+            if isType(v, list()):
+                new_v = GangaList()
+                for elem in v:
+                    new_v.append(self.__cloneVal(elem, obj))
+                return new_v
+            else:
+                return self.__cloneVal(v, obj)
 
         obj_reg = obj._getRegistry()
         full_reg = obj_reg is not None and hasattr(obj_reg, 'dirty_flush_counter')
@@ -418,7 +450,13 @@ class Descriptor(object):
                         val = makeGangaList(val, parent=obj, preparable=_preparable)
         else:
             if isType(item, Schema.ComponentItem):
-                val = cloneVal(val)
+                newListObj = []
+                if isinstance(val, list):
+                    for elem in val:
+                        newListObj.append(cloneVal(elem))
+                    val = newListObj
+                else:
+                    val = cloneVal(val)
 
         if hasattr(val, '_setParent'):
             val._setParent(obj)
@@ -427,13 +465,13 @@ class Descriptor(object):
         if full_reg:
             obj_reg.dirty_flush_counter = old_count
 
-        obj._data[self._name] = val
+        obj._data[getName(self)] = val
 
         obj._setDirty()
 
     def __delete__(self, obj):
         # self._check_getter()
-        del obj._data[self._name]
+        del obj._data[getName(self)]
 
 
 def export(method):
@@ -451,11 +489,11 @@ class ObjectMetaclass(type):
         super(ObjectMetaclass, cls).__init__(name, bases, this_dict)
 
         # ignore the 'abstract' base class
-        # FIXME: this mechanism should be based on explicit cls._name or alike
+        # FIXME: this mechanism should be based on explicit getName(cls) or alike
         if name == 'GangaObject':
             return
 
-        logger.debug("Metaclass.__init__: class %s name %s bases %s", cls, name, bases)
+        #logger.debug("Metaclass.__init__: class %s name %s bases %s", cls, name, bases)
 
         # all Ganga classes must have (even empty) schema
         if not hasattr(cls, '_schema') or cls._schema is None:
@@ -510,7 +548,7 @@ class ObjectMetaclass(type):
             cls._name = name
 
         if this_schema._pluginclass is not None:
-            logger.warning('Possible schema clash in class %s between %s and %s', name, cls._name, this_schema._pluginclass._name)
+            logger.warning('Possible schema clash in class %s between %s and %s', name, getName(cls), getName(this_schema._pluginclass))
 
         # export visible properties... do not export hidden properties
         for attr, item in this_schema.allItems():
@@ -535,7 +573,7 @@ class ObjectMetaclass(type):
         if hasattr(cls, '_declared_property'):
             # if we've not even declared this we don't want to use it!
             if not cls._declared_property('hidden') or cls._declared_property('enable_plugin'):
-                allPlugins.add(cls, cls._category, cls._name)
+                allPlugins.add(cls, cls._category, getName(cls))
 
             # create a configuration unit for default values of object properties
             if not cls._declared_property('hidden') or cls._declared_property('enable_config'):
@@ -584,7 +622,7 @@ class GangaObject(Node):
         if self._schema is not None and hasattr(self._schema, 'allItems'):
             for attr, item in self._schema.allItems():
                 defVal = self._schema.getDefaultValue(attr)
-                #logger.debug("self._name : attr  =  %s : %s" % (str(self._name), str(attr)))
+                #logger.debug("getName(self) : attr  =  %s : %s" % (str(getName(self)), str(attr)))
                 setattr(self, attr, defVal)
 
         self._lock_count = {}
@@ -623,12 +661,12 @@ class GangaObject(Node):
     # schema
     def __deepcopy__(self, memo=None):
         self._getReadAccess()
-        #c = super(GangaObject, self).__deepcopy__(memo)
-        c = super(GangaObject, self).__deepcopy__(None)
+        c = super(GangaObject, self).__deepcopy__(memo)
         if self._schema is not None:
             for name, item in self._schema.allItems():
                 if not item['copyable']:
                     setattr(c, name, self._schema.getDefaultValue(name))
+
                 if item.isA(Schema.SharedItem):
 
                     shared_dir = getattr(c, name)
@@ -671,8 +709,8 @@ class GangaObject(Node):
                     reg._write_access(root)
                     _haveLocked = True
                 except (RegistryLockError, RegistryAccessError) as x:
-                    import traceback
-                    traceback.print_stack()
+                    #import traceback
+                    #traceback.print_stack()
                     from time import sleep
                     sleep(_sleep_size)  # Sleep 2 sec between tests
                     logger.info("Waiting on Write access to registry: %s" % reg.name)

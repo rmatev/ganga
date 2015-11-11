@@ -4,6 +4,7 @@ from Ganga.GPIDev.Lib.Registry.JobRegistry import JobRegistrySlice, JobRegistryS
 import time
 from Ganga.GPIDev.Lib.Tasks import ITask
 from GangaLHCb.Lib.Tasks.LHCbTransform import LHCbTransform
+from Ganga.GPIDev.Lib.Tasks.common import logger
 
 ########################################################################
 
@@ -16,8 +17,7 @@ class LHCbTask(ITask):
 
     _category = 'tasks'
     _name = 'LHCbTask'
-    _exportmethods = ITask._exportmethods + \
-        ['addQuery', 'updateQuery', 'removeUnusedData', 'cleanTask']
+    _exportmethods = ITask._exportmethods + ['addQuery', 'updateQuery', 'removeUnusedData', 'cleanTask']
 
     _tasktype = "ITask"
 

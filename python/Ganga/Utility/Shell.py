@@ -88,14 +88,14 @@ class Shell(object):
 
         """
 
-        if setup:
+        if setup is not None:
 
             env = dict(os.environ)
             env = expand_vars(env)
 
             logger.debug("Initializing Shell")
-            logger.debug("%s" % setup)
-            logger.debug("%s" % " ".join(setup_args))
+            logger.debug("command:\n%s" % setup)
+            logger.debug("args:\n%s" % " ".join(setup_args))
 
             this_cwd = os.path.abspath(os.getcwd())
             if not os.path.exists(this_cwd):
@@ -113,16 +113,19 @@ class Shell(object):
             # print eval(str(output)[0])
             try:
                 env2 = expand_vars(eval(eval(str(output))[0]))
-            except:
+            except Exception as err:
+                logger.debug("Err: %s" % str(err))
                 env2 = None
                 logger.error("Cannot construct environ:\n%s" % str(output)[0])
                 try:
                     logger.error("eval: %s" % str(eval(str(output)[0])))
-                except:
+                except Exception as err2:
+                    logger.debug("Err2: %s" % str(err2))
                     pass
                 try:
                     logger.error("eval(eval): %s" % eval(eval(str(output))[0]))
-                except:
+                except Exception as err3:
+                    logger.debug("Err3: %s" % str(err3))
                     pass
 
             if env2:
@@ -136,14 +139,17 @@ class Shell(object):
 
         self.dirname = None
 
-    def cmd(self, cmd, soutfile=None, allowed_exit=[0],
+    def cmd(self, cmd, soutfile=None, allowed_exit=None,
             capture_stderr=False, timeout=None, mention_outputfile_on_errors=True):
         """
         Execute an OS command and captures the stderr and stdout which are returned in a file
         """
 
+        if allowed_exit is None:
+            allowed_exit = [0]
+
         if not soutfile:
-            soutfile = tempfile.NamedTemporaryFile(mode='w+t', suffix='.out').name
+            soutfile = tempfile.NamedTemporaryFile(mode='w+t', suffix='.out', delete=False).name
 
         logger.debug('Running shell command: %s' % cmd)
         try:
@@ -213,23 +219,35 @@ class Shell(object):
 
         return rc, soutfile, m is None
 
-    def cmd1(self, cmd, allowed_exit=[0], capture_stderr=False, timeout=None):
+    def cmd1(self, cmd, allowed_exit=None, capture_stderr=False, timeout=None):
         "Executes an OS command and captures the stderr and stdout which are returned as a string"
+
+        if allowed_exit is None:
+            allowed_exit = [0]
 
         rc, outfile, m = self.cmd(cmd, None, allowed_exit, capture_stderr, timeout, mention_outputfile_on_errors=False)
 
-        with open(outfile) as out_file:
+        from contextlib import closing
+        with closing(open(outfile)) as out_file:
             output = out_file.read()
-        os.unlink(outfile)
+        try:
+            os.remove(outfile)
+        except OSError as err:
+            if err.errno != errno.ENOENT:
+                logger.debug("Err removing shell output: %s" % str(err))
+                raise err
+            pass
 
         return rc, output, m
 
-    def system(self, cmd, allowed_exit=[0], stderr_file=None):
+    def system(self, cmd, allowed_exit=None, stderr_file=None):
         """Execute on OS command. Useful for interactive commands. Stdout and Stderr are not
         caputured and are passed on the caller.
 
         stderr_capture may specify a name of a file to which stderr is redirected.
         """
+        if allowed_exit is None:
+            allowed_exit = [0]
 
         logger.debug('Calling shell command: %s' % cmd)
 

@@ -33,6 +33,7 @@ from Ganga.Utility.logic import implies
 from Ganga.Utility.GridShell import getShell
 
 from Ganga.GPIDev.Credentials2 import VomsProxy, require_credential, credential_store, needed_credentials
+from Ganga.GPIDev.Base.Proxy import isType
 
 try:
     simulator_enabled = os.environ['GANGA_GRID_SIMULATOR']
@@ -199,11 +200,6 @@ class LCG(IBackend):
     _exportmethods = ['loginfo', 'inspect',
                       'match', 'get_wms_list', 'get_ce_list', 'get_se_list']
 
-    _GUIPrefs = [{'attribute': 'CE', 'widget': 'String'},
-                 {'attribute': 'jobtype', 'widget': 'String_Choice',
-                     'choices': ['Normal', 'MPICH']},
-                ]
-
     _final_ganga_states = ['completing', 'completed', 'failed']
 
     def __init__(self):
@@ -223,7 +219,6 @@ class LCG(IBackend):
             logger.debug('load %s as LCGRequirements' % reqName)
         except:
             logger.debug('load default LCGRequirements')
-            pass
 
         # dynamic sandbox cache object loading
         try:
@@ -235,7 +230,6 @@ class LCG(IBackend):
             logger.debug('load %s as SandboxCache' % scName)
         except:
             logger.debug('load default LCGSandboxCAche')
-            pass
 
     def __setup_sandboxcache__(self, job):
         """Sets up the sandbox cache object to adopt the runtime configuration of the LCG backend"""
@@ -245,7 +239,13 @@ class LCG(IBackend):
         self.sandboxcache.vo = config['VirtualOrganisation']
         self.sandboxcache.timeout = config['SandboxTransferTimeout']
 
-        if self.sandboxcache._name == 'LCGSandboxCache':
+        try:
+            from Ganga.GPI import DQ2SandboxCache
+        except ImportError:
+            DQ2SandboxCache = None
+
+        from Ganga.Lib.LCG.LCGSandboxCache import LCGSandboxCache
+        if isType(self.sandboxcache, LCGSandboxCache):
             if not self.sandboxcache.lfc_host:
                 self.sandboxcache.lfc_host = Grid.__get_lfc_host__()
 
@@ -266,13 +266,12 @@ class LCG(IBackend):
             if (self.sandboxcache.se_type in ['srmv2']) and (not self.sandboxcache.srm_token):
                 self.sandboxcache.srm_token = config['DefaultSRMToken']
 
-        elif self.sandboxcache._name == 'DQ2SandboxCache':
+        elif DQ2SandboxCache is not None and isType(self.sandboxcache, DQ2SandboxCache):
 
             # generate a new dataset name if not given
             if not self.sandboxcache.dataset_name:
                 from GangaAtlas.Lib.ATLASDataset.DQ2Dataset import dq2outputdatasetname
-                self.sandboxcache.dataset_name, unused = dq2outputdatasetname(
-                    "%s.input" % get_uuid(), 0, False, '')
+                self.sandboxcache.dataset_name, unused = dq2outputdatasetname("%s.input" % get_uuid(), 0, False, '')
 
             # subjobs inherits the dataset name from the master job
             for sj in job.subjobs:
@@ -322,7 +321,8 @@ class LCG(IBackend):
         # for LCGSandboxCache, take the one specified in the sansboxcache object.
         # the value is exactly the same as the one from the local grid shell env. if
         # it is not specified exclusively.
-        if self.sandboxcache._name == 'LCGSandboxCache':
+        from Ganga.Lib.LCG.LCGSandboxCache import LCGSandboxCache
+        if isType(self.sandboxcache, LCGSandboxCache):
             lfc_host = self.sandboxcache.lfc_host
 
         # or in general, query it from the Grid object
@@ -1409,8 +1409,7 @@ sys.exit(0)
             fname = os.path.join(job.outputdir, '_peek.dat')
 
             sh = getShell(self.credential_requirements)
-            re, output, m = sh.cmd(
-                "glite-wms-job-perusal --get --all -f stdout %s" % self.id, fname)
+            re, output, m = sh.cmd("glite-wms-job-perusal --get --all -f stdout %s" % self.id, fname)
             job.viewFile(fname, cmd)
 
         return None
