@@ -672,6 +672,7 @@ class Panda(IBackend):
 
     def master_submit(self,rjobs,subjobspecs,buildjobspec):
         '''Submit jobs'''
+        from Ganga.Utility.logic import implies
        
         logger.debug("Using Panda server baseURL=%s" %Client.baseURL)
         logger.debug("Using Panda server baseURLSSL=%s" %Client.baseURLSSL)
