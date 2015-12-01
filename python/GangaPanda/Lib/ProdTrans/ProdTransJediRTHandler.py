@@ -19,16 +19,6 @@ class ProdTransJediRTHandler(IRuntimeHandler):
         """Prepare the master aspect of job submission.
            Returns: jobmasterconfig understood by Panda backend."""
 
-        job = app._getParent()
-        logger.debug('ProdTransJediRTHandler master_prepare() for %s',
-                    job.getFQID('.'))
-
-        return None
-
-    def prepare(self, app, appsubconfig, appmasterconfig, jobmasterconfig):
-        """Prepare the specific aspec of each subjob.
-           Returns: subjobconfig list of objects understood by backends."""
-
         from pandatools import Client
         from pandatools import AthenaUtils
         from taskbuffer.JobSpec import JobSpec
@@ -36,36 +26,18 @@ class ProdTransJediRTHandler(IRuntimeHandler):
         from GangaAtlas.Lib.ATLASDataset.DQ2Dataset import dq2_set_dataset_lifetime
         from GangaPanda.Lib.Panda.Panda import refreshPandaSpecs
 
+        job = app._getParent()
+        logger.debug('ProdTransJediRTHandler master_prepare() for %s',
+                    job.getFQID('.'))
+
         # make sure we have the correct siteType
-        refreshPandaSpecs()
+        #refreshPandaSpecs()
 
         job = app._getParent()
         masterjob = job._getRoot()
 
-        logger.debug('ProdTransPandaRTHandler prepare called for %s',
-                     job.getFQID('.'))
-
         job.backend.actualCE = job.backend.site
         job.backend.requirements.cloud = Client.PandaSites[job.backend.site]['cloud']
-
-        # check that the site is in a submit-able status
-        if not job.splitter or job.splitter._name != 'DQ2JobSplitter':
-            allowed_sites = job.backend.list_ddm_sites()
-
-        try:
-            outDsLocation = Client.PandaSites[job.backend.site]['ddm']
-            tmpDsExist = False
-            if (configPanda['processingType'].startswith('gangarobot') or configPanda['processingType'].startswith('hammercloud')):
-                #if Client.getDatasets(job.outputdata.datasetname):
-                if getDatasets(job.outputdata.datasetname):
-                    tmpDsExist = True
-                    logger.info('Re-using output dataset %s'%job.outputdata.datasetname)
-            if not configPanda['specialHandling']=='ddm:rucio' and not  configPanda['processingType'].startswith('gangarobot') and not configPanda['processingType'].startswith('hammercloud') and not configPanda['processingType'].startswith('rucio_test'):
-                Client.addDataset(job.outputdata.datasetname,False,location=outDsLocation,allowProdDisk=True,dsExist=tmpDsExist)
-            logger.info('Output dataset %s registered at %s'%(job.outputdata.datasetname,outDsLocation))
-            dq2_set_dataset_lifetime(job.outputdata.datasetname, outDsLocation)
-        except exceptions.SystemExit:
-            raise BackendError('Panda','Exception in adding dataset %s: %s %s'%(job.outputdata.datasetname,sys.exc_info()[0],sys.exc_info()[1]))
 
         # JobSpec.
         jspec = JobSpec()
