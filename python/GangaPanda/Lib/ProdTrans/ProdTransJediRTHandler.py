@@ -39,133 +39,114 @@ class ProdTransJediRTHandler(IRuntimeHandler):
         job.backend.actualCE = job.backend.site
         job.backend.requirements.cloud = Client.PandaSites[job.backend.site]['cloud']
 
-        # JobSpec.
-        jspec = JobSpec()
-        jspec.currentPriority = app.priority
-        jspec.jobDefinitionID = masterjob.id
-        jspec.jobName = commands.getoutput('uuidgen 2> /dev/null')
-        jspec.coreCount = app.core_count
-        jspec.AtlasRelease = 'Atlas-%s' % app.atlas_release
-        jspec.homepackage = app.home_package
-        jspec.transformation = app.transformation
-        jspec.destinationDBlock = job.outputdata.datasetname
-        if job.outputdata.location:
-            jspec.destinationSE = job.outputdata.location
-        else:
-            jspec.destinationSE = job.backend.site
-        if job.inputdata:
-            jspec.prodDBlock = job.inputdata.dataset[0]
-        else:
-            jspec.prodDBlock = 'NULL'
+        # make task
+        taskParamMap = {}
+        # Enforce that outputdataset name ends with / for container
+        if not job.outputdata.datasetname.endswith('/'):
+            job.outputdata.datasetname = job.outputdata.datasetname + '/'
+
+        taskParamMap['taskName'] = job.outputdata.datasetname
+
+        taskParamMap['currentPriority'] = app.priority
+        taskParamMap['coreCount'] = app.core_count
+        taskParamMap['uniqueTaskName'] = True
+        taskParamMap['vo'] = 'atlas'
+        taskParamMap['architecture'] = AthenaUtils.getCmtConfig(athenaVer=app.atlas_release, cmtConfig=app.atlas_cmtconfig)
+        taskParamMap['transUses'] = 'Atlas-%s' % app.atlas_release
+        taskParamMap['transHome'] = app.home_package
+        taskParamMap['transformation'] = app.transformation
+
+        configSys = getConfig('System')
+        gangaver = configSys['GANGA_VERSION'].lower()
+        if not gangaver:
+            gangaver = "ganga"
+
+        taskParamMap['processingType'] = configPanda['processingType']
         if app.prod_source_label:
-            jspec.prodSourceLabel = app.prod_source_label
+            taskParamMap['prodSourceLabel'] = app.prod_source_label
         else:
-            jspec.prodSourceLabel = configPanda['prodSourceLabelRun']
-        jspec.processingType = configPanda['processingType']
-        jspec.specialHandling = configPanda['specialHandling']
-        jspec.computingSite = job.backend.site
-        jspec.cloud = job.backend.requirements.cloud
-        jspec.cmtConfig = app.atlas_cmtconfig
-        if app.dbrelease == 'LATEST':
-            try:
-                latest_dbrelease = getLatestDBReleaseCaching()
-            except:
-                from pandatools import Client
-                latest_dbrelease = Client.getLatestDBRelease()
-            m = re.search('(.*):DBRelease-(.*)\.tar\.gz', latest_dbrelease)
-            if m:
-                self.dbrelease_dataset = m.group(1)
-                self.dbrelease = m.group(2)
-            else:
-                raise ApplicationConfigurationError(None, "Error retrieving LATEST DBRelease. Try setting application.dbrelease manually.")
+            taskParamMap['prodSourceLabel'] = configPanda['prodSourceLabelRun']
+
+        taskParamMap['cloud'] = job.backend.requirements.cloud
+        taskParamMap['site'] = job.backend.site
+        if job.backend.requirements.noEmail:
+            taskParamMap['noEmail'] = True
+        if job.backend.requirements.skipScout:
+            taskParamMap['skipScout'] = True
+        if not app.atlas_exetype in ["ATHENA", "TRF"]:
+            taskParamMap['nMaxFilesPerJob'] = job.backend.requirements.maxNFilesPerJob
+        if job.backend.requirements.disableAutoRetry:
+            taskParamMap['disableAutoRetry'] = 1
+
+        # log
+        logDatasetName = re.sub('/$','.log/',job.outputdata.datasetname)
+        taskParamMap['log'] = {'dataset': logDatasetName,
+                               'container': logDatasetName,
+                               'type':'template',
+                               'param_type':'log',
+                               'value':'{0}.${{SN}}.log.tgz'.format(logDatasetName[:-1])
+                               }
+
+        # TODO: This should be fixed properly!
+        #taskParamMap['jobParameters'] = app.job_parameters
+
+        # param for DBR
+        if self.dbrelease != '':
+            dbrDS = self.dbrelease.split(':')[0]
+            # change LATEST to DBR_LATEST
+            if dbrDS == 'LATEST':
+                dbrDS = 'DBR_LATEST'
+            dictItem = {'type':'template',
+                        'param_type':'input',
+                        'value':'--dbrFile=${DBR}',
+                        'dataset':dbrDS,
+                        }
+            taskParamMap['jobParameters'] += [dictItem]
+
+        inputMap = {}
+        if job.inputdata and job.inputdata._name == 'DQ2Dataset':
+            tmpDict = {'type':'template',
+                       'param_type':'input',
+                       'value':'-i "${IN/T}"',
+                       'dataset': ','.join(job.inputdata.dataset),
+                       'expand':True,
+                       'exclude':'\.log\.tgz(\.\d+)*$',
+                       }
+            #if options.inputType != '':
+            #    tmpDict['include'] = options.inputType
+            taskParamMap['jobParameters'].append(tmpDict)
+            taskParamMap['dsForIN'] = ','.join(job.inputdata.dataset)
+            inputMap['IN'] = ','.join(job.inputdata.dataset)
         else:
-            self.dbrelease_dataset = app.dbrelease_dataset
-            self.dbrelease = app.dbrelease
-        jspec.jobParameters = app.job_parameters
+            # no input
+            taskParamMap['noInput'] = True
+            if job.backend.requirements.split > 0:
+                taskParamMap['nEvents'] = job.backend.requirements.split
+            else:
+                taskParamMap['nEvents'] = 1
+            taskParamMap['nEventsPerJob'] = 1
+            taskParamMap['jobParameters'] += [
+                {'type':'constant',
+                 'value': '-i "[]"',
+                 },
+                ]
 
-        if self.dbrelease:
-            if self.dbrelease == 'current':
-                jspec.jobParameters += ' --DBRelease=current'
-            else:
-                if jspec.transformation.endswith("_tf.py") or jspec.transformation.endswith("_tf"):
-                    jspec.jobParameters += ' --DBRelease=DBRelease-%s.tar.gz' % (self.dbrelease,)
-                else:
-                    jspec.jobParameters += ' DBRelease=DBRelease-%s.tar.gz' % (self.dbrelease,)
-                dbspec = FileSpec()
-                dbspec.lfn = 'DBRelease-%s.tar.gz' % self.dbrelease
-                dbspec.dataset = self.dbrelease_dataset
-                dbspec.prodDBlock = jspec.prodDBlock
-                dbspec.type = 'input'
-                jspec.addFile(dbspec)
+        # if job.inputdata:
+        #     m = re.search('(.*)\.(.*)\.(.*)\.(.*)\.(.*)\.(.*)',
+        #                   job.inputdata.dataset[0])
+        #     if not m:
+        #         logger.error("Error retrieving run number from dataset name")
+        #         #raise ApplicationConfigurationError(None, "Error retrieving run number from dataset name")
+        #         runnumber = 105200
+        #     else:
+        #         runnumber = int(m.group(2))
+        #     if jspec.transformation.endswith("_tf.py") or jspec.transformation.endswith("_tf"):
+        #         jspec.jobParameters += ' --runNumber %d' % runnumber
+        #     else:
+        #         jspec.jobParameters += ' RunNumber=%d' % runnumber
 
-        if job.inputdata:
-            m = re.search('(.*)\.(.*)\.(.*)\.(.*)\.(.*)\.(.*)',
-                          job.inputdata.dataset[0])
-            if not m:
-                logger.error("Error retrieving run number from dataset name")
-                #raise ApplicationConfigurationError(None, "Error retrieving run number from dataset name")
-                runnumber = 105200
-            else:
-                runnumber = int(m.group(2))
-            if jspec.transformation.endswith("_tf.py") or jspec.transformation.endswith("_tf"):
-                jspec.jobParameters += ' --runNumber %d' % runnumber
-            else:
-                jspec.jobParameters += ' RunNumber=%d' % runnumber
 
-        # Output files.
-        randomized_lfns = []
-        ilfn = 0
-        for lfn, lfntype in zip(app.output_files,app.output_type):
-            ofspec = FileSpec()
-            if app.randomize_lfns:
-                randomized_lfn = lfn + ('.%s.%d.%s' % (job.backend.site, int(time.time()), commands.getoutput('uuidgen 2> /dev/null')[:4] ) )
-            else:
-                randomized_lfn = lfn
-            ofspec.lfn = randomized_lfn
-            randomized_lfns.append(randomized_lfn)
-            ofspec.destinationDBlock = jspec.destinationDBlock
-            ofspec.destinationSE = jspec.destinationSE
-            ofspec.dataset = jspec.destinationDBlock
-            ofspec.type = 'output'
-            jspec.addFile(ofspec)
-            if jspec.transformation.endswith("_tf.py") or jspec.transformation.endswith("_tf"):
-                jspec.jobParameters += ' --output%sFile %s' % (lfntype, randomized_lfns[ilfn])
-            else:
-                jspec.jobParameters += ' output%sFile=%s' % (lfntype, randomized_lfns[ilfn])
-            ilfn=ilfn+1
-
-        # Input files.
-        if job.inputdata:
-            for guid, lfn, size, checksum, scope in zip(job.inputdata.guids, job.inputdata.names, job.inputdata.sizes, job.inputdata.checksums, job.inputdata.scopes):
-                ifspec = FileSpec()
-                ifspec.lfn = lfn
-                ifspec.GUID = guid
-                ifspec.fsize = size
-                ifspec.md5sum = checksum
-                ifspec.scope = scope
-                ifspec.dataset = jspec.prodDBlock
-                ifspec.prodDBlock = jspec.prodDBlock
-                ifspec.type = 'input'
-                jspec.addFile(ifspec)
-            if app.input_type:
-                itype = app.input_type
-            else:
-                itype = m.group(5)
-            if jspec.transformation.endswith("_tf.py") or jspec.transformation.endswith("_tf"):
-                jspec.jobParameters += ' --input%sFile %s' % (itype, ','.join(job.inputdata.names))
-            else:
-                jspec.jobParameters += ' input%sFile=%s' % (itype, ','.join(job.inputdata.names))
-
-        # Log files.
-        lfspec = FileSpec()
-        lfspec.lfn = '%s.job.log.tgz' % jspec.jobName
-        lfspec.destinationDBlock = jspec.destinationDBlock
-        lfspec.destinationSE  = jspec.destinationSE
-        lfspec.dataset = jspec.destinationDBlock
-        lfspec.type = 'log'
-        jspec.addFile(lfspec)
-
-        return jspec
+        return taskParamMap
 
 from Ganga.GPIDev.Adapters.ApplicationRuntimeHandlers import allHandlers
-allHandlers.add('ProdTrans', 'Panda', ProdTransPandaRTHandler)
+allHandlers.add('ProdTrans', 'Jedi', ProdTransJediRTHandler)
