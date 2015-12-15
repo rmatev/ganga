@@ -144,6 +144,7 @@ def rmrf(name, count=0):
         except OSError as err:
             if err.errno != errno.ENOENT:
                 logger.debug("rmrf Err: %s" % str(err))
+                logger.debug("name: %s" % str(name))
                 remove_name = name
                 raise err
             return
@@ -154,6 +155,7 @@ def rmrf(name, count=0):
             except OSError as err:
                 if err.errno == errno.EBUSY:
                     logger.debug("rmrf Remove err: %s" % str(err))
+                    logger.debug("name: %s" % str(remove_name))
                     ## Sleep 2 sec and try again
                     time.sleep(2.)
                     rmrf(os.path.join(remove_name, sfn), count+1)
@@ -174,6 +176,7 @@ def rmrf(name, count=0):
             if err.errno not in [errno.ENOENT, errno.EBUSY]:
                 raise err
             logger.debug("rmrf Move err: %s" % str(err))
+            logger.debug("name: %s" % str(name))
             if err.errno == errno.EBUSY:
                 rmrf(name, count+1)
             return
@@ -183,6 +186,7 @@ def rmrf(name, count=0):
         except OSError as err:
             if err.errno != errno.ENOENT:
                 logger.debug("%s" % str(err))
+                logger.debug("name: %s" % str(remove_name))
                 raise err
             return
 
@@ -201,6 +205,7 @@ class GangaRepositoryLocal(GangaRepository):
         self.saved_idxpaths = {}
         self._cache_load_timestamp = {}
         self.printed_explanation = False
+        self._fully_loaded = {}
 
     def startup(self):
         """ Starts a repository and reads in a directory structure.
@@ -279,7 +284,7 @@ class GangaRepositoryLocal(GangaRepository):
             this_data = obj.getNodeData()
             for k, v in cache.iteritems():
                 this_data[k] = v
-            obj.setNodeData(copy.deepcopy(this_data))
+            obj.setNodeData(this_data)
             obj.setNodeIndexCache(cache)
             self._cache_load_timestamp[this_id] = os.stat(fn).st_ctime
             self._cached_cat[this_id] = cat
@@ -386,9 +391,10 @@ class GangaRepositoryLocal(GangaRepository):
                     if obj is not None:
                         new_index = self.registry.getIndexCache(obj)
                     if new_index is not None and new_index != obj.getNodeIndexCache():
+                        logger.debug("k: %s" % str(k))
                         arr_k = [k]
                         if len(self.lock(arr_k)) != 0:
-                            self.index_write(arr_k)
+                            self.index_write(k)
                             self.unlock(arr_k)
                 except Exception as err:
                     logger.debug("Failed to update index: %s on startup/shutdown" % str(k))
@@ -414,7 +420,6 @@ class GangaRepositoryLocal(GangaRepository):
                     cached_list.append(self._cached_cls[k])
                     cached_list.append(self._cached_obj[k])
                     this_master_cache.append(cached_list)
-
             try:
                 with open(_master_idx, 'w') as of:
                     pickle_to_file(this_master_cache, of)
@@ -538,7 +543,7 @@ class GangaRepositoryLocal(GangaRepository):
         """ Add the given objects to the repository, forcing the IDs if told to.
         Raise RepositoryError"""
 
-        if not force_ids is None:  # assume the ids are already locked by Registry
+        if force_ids not in [None, []]:  # assume the ids are already locked by Registry
             if not len(objs) == len(force_ids):
                 raise RepositoryError(self, "Internal Error: add with different number of objects and force_ids!")
             ids = force_ids
@@ -630,6 +635,9 @@ class GangaRepositoryLocal(GangaRepository):
         else:
             raise RepositoryError(self, "Cannot flush an Empty object for ID: %s" % str(this_id))
 
+        if this_id not in self._fully_loaded.keys():
+            self._fully_loaded[this_id] = obj
+
     def flush(self, ids):
         logger.debug("Flushing: %s" % ids)
         #import traceback
@@ -661,10 +669,14 @@ class GangaRepositoryLocal(GangaRepository):
 
         return node_count
 
+    def _actually_loaded(self, this_id):
+        return this_id in self._fully_loaded.keys()
+
     def _actually_load_xml(self, fobj, fn, this_id, load_backup):
 
         must_load = (not this_id in self.objects) or (self.objects[this_id].getNodeData() is None)
         tmpobj = None
+
         if must_load or (self._load_timestamp.get(this_id, 0) != os.fstat(fobj.fileno()).st_ctime):
             tmpobj, errs = self.from_file(fobj)
 
@@ -677,21 +689,28 @@ class GangaRepositoryLocal(GangaRepository):
 
             if this_id in self.objects:
                 obj = self.objects[this_id]
-                obj.setNodeData(tmpobj.getNodeData())
+                #logger.info("Loading")
+                #logger.info("tmpobj: %s" % str(tmpobj))
+                #logger.info("\n\nobj: %s\n\n" % str(type(obj)))
+                obj.setNodeData(copy.deepcopy(tmpobj.getNodeData()))
+                #obj.__dict__ = tmpobj.__dict__
+                #for attr_name, attr_val in tmpobj.getNodeData().iteritems():
+                #    obj.setAttribute(attr_name, copy.deepcopy(attr_val))
+                #obj.setNodeData(tmpobj.getNodeData())
                 # Fix parent for objects in _data (necessary!)
-                for node_obj in obj.getNodeData().items():
-                    if isType(node_obj, Node):
-                        node_obj._setParent(obj)
-                    if isType(node_obj, (list, GangaList, tuple)):
-                        # set the parent of the list or dictionary (or other iterable) items
-                        for elem in node_obj:
-                            if isType(elem, Node):
-                                elem._setParent(obj)
+
+                for node_key, node_val in obj.getNodeData().iteritems():
+                    if isType(getattr(stripProxy(obj), node_key), Node):
+                        if node_key not in Node._ref_list:
+                            getattr(stripProxy(obj), node_key)._setParent(obj)
+
 
                 # Check if index cache; if loaded; was valid:
                 if obj.getNodeIndexCache() is not None:
                     new_idx_cache = self.registry.getIndexCache(obj)
                     if new_idx_cache != obj.getNodeIndexCache():
+                        logger.debug("NEW: %s" % str(new_idx_cache))
+                        logger.debug("OLD: %s" % str(obj.getNodeIndexCache()))
                         # index is wrong! Try to get read access - then we can fix this
                         if len(self.lock([this_id])) != 0:
                             self.index_write(this_id)
@@ -717,16 +736,24 @@ class GangaRepositoryLocal(GangaRepository):
                             obj.setNodeIndexCache(None)
                 obj.setNodeIndexCache(None)
 
+                if this_id not in self._fully_loaded.keys():
+                    self._fully_loaded[this_id] = obj
+
             else:
                 tmpobj.setNodeIndexCache(None)
                 self._internal_setitem__(this_id, tmpobj)
 
-            if self.sub_split in self.objects[this_id].getNodeData().keys():
+            if hasattr(self.objects[this_id], self.sub_split):
                 self.objects[this_id].getNodeAttribute(self.sub_split)._setParent(self.objects[this_id])
 
             self._load_timestamp[this_id] = os.fstat(fobj.fileno()).st_ctime
         else:
             logger.debug("Didn't Load Job ID: %s" % str(this_id))
+
+        for attr_name, attr_val in self.objects[this_id].getNodeData().iteritems():
+            if isType(getattr(self.objects[this_id], attr_name), Node):
+                if attr_name not in Node._ref_list:
+                    getattr(self.objects[this_id], attr_name)._setParent(self.objects[this_id])
 
         logger.debug("Finished Loading XML")
 
@@ -792,6 +819,7 @@ class GangaRepositoryLocal(GangaRepository):
                 raise err
 
             except Exception as err:
+                raise err
 
                 if isType(err, XMLFileError):
                     logger.error("XML File failed to load for Job id: %s" % str(this_id))
@@ -837,6 +865,8 @@ class GangaRepositoryLocal(GangaRepository):
                 logger.debug("Delete Error: %s" % str(err))
             self._internal_del__(this_id)
             rmrf(os.path.dirname(fn))
+            if this_id in self._fully_loaded.keys():
+                del self._fully_loaded[this_id]
 
     def lock(self, ids):
         return self.sessionlock.lock_ids(ids)

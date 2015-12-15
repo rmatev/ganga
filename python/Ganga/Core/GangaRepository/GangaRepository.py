@@ -198,6 +198,8 @@ class GangaRepository(object):
             self._found_classes[(category, classname)] = cls
         cls = self._found_classes[(category, classname)]
         obj = super(cls, cls).__new__(cls)
+        setattr(obj, '_parent', None)
+        setattr(obj, 'id', '')
         obj.__init__()
         obj._proxyObject = None
         obj.setNodeData({})
@@ -214,8 +216,9 @@ class GangaRepository(object):
         self.objects[this_id] = obj
         setattr(obj, "_registry_id", this_id)
         setattr(obj, "_registry_locked", False)
+        setattr(obj, "_id", this_id)
         if obj.getNodeData() and "id" in obj.getNodeData().keys():  # MAGIC id
-            obj.id = this_id
+            obj.setNodeAttribute('id', this_id)
         obj._setRegistry(self.registry)
 
     def _internal_del__(self, id):
