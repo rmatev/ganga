@@ -53,9 +53,8 @@ def startGanga():
     logger.info("Parsing Command Line options")
     import Ganga.Runtime
     import sys
-    this_argv = sys.argv[1:]
+    this_argv = []
     this_argv.append('-o[Configuration]RUNTIME_PATH=GangaTest')
-    this_argv.append('-o[Configuration]UsageMonitoringURL=""')
     this_argv.append('-o[Configuration]user=testframework')
     this_argv.append('-o[Configuration]gangadir=$HOME/gangadir_testing')
     this_argv.append('-o[Configuration]repositorytype=LocalXML')

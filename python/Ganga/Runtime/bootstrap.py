@@ -139,6 +139,12 @@ under certain conditions; type license() for details.
 
         self.default_config_file = os.path.expanduser('~/.gangarc')
 
+        if sys.hexversion < 0x020700F0:
+            version = '{0}.{1}'.format(sys.version_info[0], sys.version_info[1])
+            logger.warning('Ganga will soon be depending on Python 2.7. '
+                           'You have Python {version} installed. '
+                           'See https://github.com/ganga-devs/ganga/wiki/Python-2.7'.format(version=version))
+
     def exit(self, *msg):
         logger.info(self.hello_string)
         for m in msg:
@@ -241,8 +247,7 @@ under certain conditions; type license() for details.
 
     @staticmethod
     def new_version(update=True):
-        versions_filename = os.path.join(
-            Ganga.Utility.Config.getConfig('Configuration')['gangadir'], '.used_versions')
+        versions_filename = os.path.join(Ganga.Utility.Config.getConfig('Configuration')['gangadir'], '.used_versions')
         if not os.path.exists(versions_filename):
             if update:
                 with open(versions_filename, 'w') as versions_file:
@@ -255,6 +260,61 @@ under certain conditions; type license() for details.
                 return True
 
         return False
+
+    @staticmethod
+    def rollHistoryForward():
+        versions_filename = os.path.join(Ganga.Utility.Config.getConfig('Configuration')['gangadir'], '.used_versions')
+        hasLoaded_newer = False
+        with open(versions_filename, 'r') as versions_file:
+            this_version = versions_file.read()
+            split_version_info = this_version.split('.')
+            if len(split_version_info) == 3:
+                major = int(split_version_info[0])
+                minor = int(split_version_info[1])
+                debug = int(split_version_info[2])
+                if major > 6:
+                    hasLoaded_newer = True
+                if major == 6 and minor > 1:
+                    hasLoaded_newer = True
+                if major == 6 and minor == 1 and debug > 13:
+                    hasLoaded_newer = True
+        
+        old_dir = os.path.expanduser('~/.ipython-ganga')
+        if 'IPYTHONDIR' in os.environ.keys():
+            old_dir = os.path.abspath(os.path.expanduser(os.environ['IPYTHONDIR']))
+
+        single_pass_file = os.path.join(old_dir, '.have_migrated')
+        logger.debug("testing: %s" % single_pass_file)
+
+        if hasLoaded_newer and not os.path.exists(single_pass_file):
+
+            logger.info("This is your first time Running Ganga >=6.1.14")
+            logger.info("Now attempting to migrate your IPython history file")
+
+            try:
+                from IPython.core.interactiveshell import InteractiveShell
+                from IPython.core.history import HistoryManager
+                from IPython.utils.path import locate_profile, get_ipython_dir
+            except ImportError as err:
+                logger.error("Unable to import required IPython files, can't roll forward history")
+                logger.error("If you want to roll forward your old history files you'll need to do this by hand")
+                logger.error("Please try running: https://gist.github.com/minrk/6003365")
+
+            old_text_history = os.path.join(old_dir, 'history')
+            new_sqlite_history = os.path.join(old_dir, "profile_default/history.sqlite")
+
+            IPython_history = HistoryManager(hist_file=new_sqlite_history, shell = InteractiveShell.instance())
+
+            with open(old_text_history) as hist_file:
+                for linenum, line in enumerate(hist_file):
+                    IPython_history.store_inputs(linenum, line)
+
+            ## Set a file to indicate that we've already made this transition
+            passed_file = open(single_pass_file, "w")
+            passed_file.close()
+
+            logger.info("IPython history migrated successfully.")
+
 
     @staticmethod
     def generate_config_file(config_file):
@@ -275,10 +335,8 @@ under certain conditions; type license() for details.
                     logger.info('Copied current config file to %s' % bn)
                     break
             else:
-                config_directory = os.path.dirname(
-                    os.path.abspath(config_file))
-                config_backupdir = os.path.join(
-                    config_directory, '.gangarc_backups')
+                config_directory = os.path.dirname(os.path.abspath(config_file))
+                config_backupdir = os.path.join(config_directory, '.gangarc_backups')
                 if not os.path.exists(config_backupdir):
                     os.makedirs(config_backupdir)
 
@@ -313,22 +371,18 @@ under certain conditions; type license() for details.
         import itertools
         logger = getLogger('ReleaseNotes')
         if getConfig('Configuration')['ReleaseNotes'] == True:
-            packages = itertools.imap(lambda x: 'ganga/python/' + x, itertools.ifilter(
-                lambda x: x != '', ['Ganga'] + getConfig('Configuration')['RUNTIME_PATH'].split(':')))
-            pathname = os.path.join(os.path.dirname(
-                __file__), '..', '..', '..', 'release', 'ReleaseNotes-%s' % _gangaVersion)
+            packages = itertools.imap(lambda x: 'ganga/python/' + x, itertools.ifilter(lambda x: x != '', ['Ganga'] + getConfig('Configuration')['RUNTIME_PATH'].split(':')))
+            pathname = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'release', 'ReleaseNotes-%s' % _gangaVersion)
 
             if not os.path.exists(pathname):
-                logger.warning(
-                    "couldn't find release notes for version %s" % _gangaVersion)
+                logger.warning("couldn't find release notes for version %s" % _gangaVersion)
                 return
 
             bounding_line = '**************************************************************************************************************\n'
             dividing_line = '--------------------------------------------------------------------------------------------------------------\n'
             with open(pathname, 'r') as f:
                 try:
-                    notes = [l.strip() for l in f.read().replace(
-                        bounding_line, '').split(dividing_line)]
+                    notes = [l.strip() for l in f.read().replace(bounding_line, '').split(dividing_line)]
                 except Exception, err:
                     logger.error('Error while attempting to read release notes')
                     logger.debug('Reason: %s' % str(err))
@@ -340,8 +394,7 @@ under certain conditions; type license() for details.
                 return
 
             log_divider = '-' * 50
-            note_gen = [(p, notes[notes.index(p) + 1].splitlines())
-                        for p in packages if p in notes]
+            note_gen = [(p, notes[notes.index(p) + 1].splitlines()) for p in packages if p in notes]
             if note_gen:
                 logger.info(log_divider)
                 logger.info(log_divider)
@@ -414,6 +467,8 @@ under certain conditions; type license() for details.
                 logger.info('re-reading in old config for updating...')
                 load_user_config(specified_config, {})
                 self.generate_config_file(specified_config)
+
+                self.rollHistoryForward()
 
                 # config file generation overwrites user values so we need to reapply the cmd line options to these user settings
                 # e.g. set -o[Configuration]gangadir=/home/mws/mygangadir and the user value gets reset to the .gangarc value
@@ -522,7 +577,9 @@ under certain conditions; type license() for details.
 
         import Ganga.Utility.files
         import Ganga.Utility.util
-        self.options.config_path = Ganga.Utility.files.expandfilename(self.options.config_path)
+        import inspect
+        GangaRootPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))), '../..'))
+        self.options.config_path = Ganga.Utility.files.expandfilename(os.path.join(GangaRootPath, self.options.config_path))
 
         try:
             hostname = Ganga.Utility.util.hostname()
@@ -642,6 +699,23 @@ If ANSI text colours are enabled, then individual colours may be specified like 
         queuesconfig = makeConfig("Queues", "configuration section for the queues")
         queuesconfig.addOption('Timeout', None, 'default timeout for queue generated processes')
         queuesconfig.addOption('NumWorkerThreads', 3, 'default number of worker threads in the queues system')
+
+
+        # [MSGMS] section create configuration
+        monConfig = makeConfig('MSGMS', 'Settings for the MSGMS monitoring plugin. Cannot be changed ruding the interactive Ganga session.')
+        monConfig.addOption('server', 'dashb-mb.cern.ch', 'The server to connect to')
+        monConfig.addOption('port', 61113, 'The port to connect to')
+        monConfig.addOption('username', 'ganga', '')
+        monConfig.addOption('password', 'analysis', '')
+        monConfig.addOption('message_destination', '/queue/ganga.status', '')
+        monConfig.addOption('usage_message_destination', "/queue/ganga.usage", '')
+        monConfig.addOption('job_submission_message_destination', "/queue/ganga.jobsubmission", '')
+
+        # prevent modification during the interactive ganga session
+        def deny_modification(name, x):
+            raise Config.ConfigError('Cannot modify [MSGMS] settings (attempted %s=%s)' % (name, x))
+        monConfig.attachUserHandler(deny_modification, None)
+
 
         # all relative names in the path are resolved wrt the _gangaPythonPath
         # the list order is reversed so that A:B maintains the typical path precedence: A overrides B
@@ -798,8 +872,11 @@ If ANSI text colours are enabled, then individual colours may be specified like 
             #    import warnings
             #    warnings.filterwarnings(action="ignore", category=RuntimeWarning)
 
+            
+            import inspect
+            GangaRootPath = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))), '../..'))
             def transform(x):
-                return os.path.normpath(Ganga.Utility.files.expandfilename(x))
+                return os.path.normpath(Ganga.Utility.files.expandfilename(os.path.join(GangaRootPath,x)))
 
             paths = map(transform, filter(lambda x: x, config['RUNTIME_PATH'].split(':')))
 
@@ -1178,6 +1255,8 @@ default_backends = LCG
                     logger.warning("Please specify the tests to run ( i.e. ganga --test Ganga/test )")
                     return -1
 
+                logger.info("myargs = %s" % str(" ".join(my_args)))
+
                 rc = runner.start(test_selection=" ".join(my_args))
             else:
                 logger.info("Test Runner is disabled (set EnableTestRunner=True to enable it)")
@@ -1223,8 +1302,7 @@ default_backends = LCG
             try:
                 execfile(fileName, local_ns)
             except Exception as x:
-                logger.error(
-                    'Failed to source %s (Error was "%s"). Check your file for syntax errors.', fileName, str(x))
+                logger.error('Failed to source %s (Error was "%s"). Check your file for syntax errors.', fileName, str(x))
         # exec StartupGPI code
         from Ganga.Utility.Config import getConfig
         config = getConfig('Configuration')
@@ -1321,7 +1399,11 @@ default_backends = LCG
 
             ipver = IPython.__version__
 
-            if ipver in ["3.1.0", "3.2.0", "3.2.1", '4.0.0']:
+            ipver_major = int(ipver[0])
+            ipver_minor = int(ipver[2])
+
+            #if ipver in ["1.2.1", "3.1.0", "3.2.0", "3.2.1", '4.0.0']:
+            if ipver_major > 1 or (ipver_major == 1 and ipver_minor >= 2):
                 self.check_IPythonDir()
                 self.launch_IPython(local_ns, args, self._ganga_error_handler, self.ganga_prompt)
             else:
@@ -1372,6 +1454,12 @@ default_backends = LCG
         if not_exist:
             os.makedirs(os.environ['IPYTHONDIR'])
 
+        rc_file = os.path.join(os.environ['IPYTHONDIR'], 'ipythonrc')
+	logger.debug("Checking: %s" % str(rc_file))
+        if not os.path.isfile(rc_file):
+            lock = open(rc_file, "w")
+            lock.close()
+
         return None
 
     @staticmethod
@@ -1398,11 +1486,16 @@ default_backends = LCG
         Launch an embedded IPython session within the Ganga.GPI namespace
         """
 
+        import IPython
+
         # Based on examples/Embedding/embed_class_long.py from the IPython source tree
 
         # First we set up the prompt
         from IPython.config.loader import Config
         cfg = Config()
+        cfg.TerminalInteractiveShell.colors = 'LightBG'
+        cfg.TerminalInteractiveShell.autocall = 0
+        cfg.PlainTextFormatter.pprint = True
         banner = exit_msg = ''
         prompt_config = cfg.PromptManager
         prompt_config.in_template = '[{time}]\nGanga In [\\#]: '
@@ -1411,7 +1504,14 @@ default_backends = LCG
 
         # Import the embed function
         from IPython.terminal.embed import InteractiveShellEmbed
-        ipshell = InteractiveShellEmbed(argv=args, config=cfg, banner1=banner, exit_msg=exit_msg)
+
+        ## Check which version of IPython we're running
+        ipver = IPython.__version__
+        ipver_major = int(ipver[0])
+        if ipver_major > 2:
+            ipshell = InteractiveShellEmbed(argv=args, config=cfg, banner1=banner, exit_msg=exit_msg)
+        else:
+            ipshell = InteractiveShellEmbed(config=cfg, banner1=banner, exit_msg=exit_msg)
 
         ipshell.set_custom_exc((Exception,), error_handler)
 

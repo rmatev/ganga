@@ -3,27 +3,25 @@ import os
 import shutil
 from Ganga.Core.exceptions import GangaException
 from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList
-from Ganga.GPIDev.Lib.File import File
+from Ganga.GPIDev.Lib.File import File, ShareDir
 from Ganga.Utility.Config import getConfig
 from Ganga.Utility.logging import getLogger
 from Ganga.Utility.files import expandfilename
 from Ganga.Utility.util import unique
 from Ganga.GPIDev.Lib.File.OutputFileManager import getOutputSandboxPatterns
 from Ganga.GPIDev.Lib.File.OutputFileManager import getInputFilesPatterns
+from Ganga.GPIDev.Base.Proxy import isType, stripProxy
 logger = getLogger()
 
 #\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\#
 
 
 def get_share_path(app=None):
-    if app is None or app == '':
-        return os.path.join(expandfilename(getConfig('Configuration')['gangadir']),
-                            'shared',
-                            getConfig('Configuration')['user'])
-    return os.path.join(expandfilename(getConfig('Configuration')['gangadir']),
-                        'shared',
-                        getConfig('Configuration')['user'],
-                        app.is_prepared.name)
+    if app is None or not isType(app, ShareDir):
+        return os.path.join(expandfilename(getConfig('Configuration')['gangadir']), 'shared', getConfig('Configuration')['user'])
+    #elif isType(app, ShareDir):
+    else:
+        return os.path.join(expandfilename(getConfig('Configuration')['gangadir']), 'shared', getConfig('Configuration')['user'], app.is_prepared.name)
 
 #\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\#
 
@@ -67,8 +65,12 @@ def master_sandbox_prepare(app, appmasterconfig, sharedir_roots=None):
     logger.debug("RTUTils master_sandbox_prepare")
 
     # catch errors from not preparing properly
-    if not hasattr(app, 'is_prepared') or app.is_prepared is None:
+    if not hasattr(stripProxy(app), 'is_prepared') or app.is_prepared is None:
         logger.warning('Application is not prepared properly')
+        if hasattr(stripProxy(app), 'is_prepared'):
+            logger.warning("app.is_prepared: %s" % str(app.is_prepared))
+        import traceback
+        traceback.print_stack()
         raise GangaException(None, 'Application not prepared properly')
 
     # Note EITHER the master inputsandbox OR the job.inputsandbox is added to

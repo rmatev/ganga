@@ -6,7 +6,7 @@ import fnmatch
 import collections
 from Ganga.Utility.external.OrderedDict import OrderedDict as oDict
 import Ganga.Utility.Config
-from Ganga.GPIDev.Base.Proxy import isType
+from Ganga.GPIDev.Base.Proxy import isType, stripProxy
 
 logger = Ganga.Utility.logging.getLogger()
 
@@ -19,18 +19,17 @@ class RegistrySlice(object):
     def __init__(self, name, display_prefix):
         self.objects = oDict()
         self.name = name
-        self._display_columns = config[display_prefix + '_columns']
-        self._display_columns_show_empty = config[
-            display_prefix + "_columns_show_empty"]
-        self._display_columns_width = config[display_prefix + "_columns_width"]
+        self._display_prefix = display_prefix
+        self._display_columns = config[self._display_prefix + '_columns']
+        self._display_columns_show_empty = config[self._display_prefix + "_columns_show_empty"]
+        self._display_columns_width = config[self._display_prefix + "_columns_width"]
         self._display_columns_functions = {}
         try:
-            cfs = config[display_prefix + '_columns_functions']
-            for c in cfs:
-                self._display_columns_functions[c] = eval(cfs[c])
+            col_funcs = config[self._display_prefix + '_columns_functions']
+            for this_col_func in col_funcs:
+                self._display_columns_functions[this_col_func] = eval(col_funcs[this_col_func])
         except Exception as x:
-            logger.error("Error on evaluating display column functions from config file: %s: %s" % (
-                x.__class__.__name__, x))
+            logger.error("Error on evaluating display column functions from config file: %s: %s" % (x.__class__.__name__, x))
 
         from Ganga.Utility.ColourText import Effects
         self._colour_normal = Effects().normal
@@ -140,11 +139,11 @@ class RegistrySlice(object):
         import fnmatch
         import re
 
-        def select_by_list(id):
-            return id in ids
+        def select_by_list(this_id):
+            return this_id in ids
 
-        def select_by_range(id):
-            return minid <= id <= maxid
+        def select_by_range(this_id):
+            return minid <= this_id <= maxid
 
         ids = None
 
@@ -158,10 +157,10 @@ class RegistrySlice(object):
                 maxid = sys.maxsize
             select = select_by_range
 
-        for id, obj in self.objects.iteritems():
-            logger.debug("id, obj: %s, %s" % (str(id), str(obj)))
-            if select(int(id)):
-                logger.debug("Selected: %s" % str(id))
+        for this_id, obj in self.objects.iteritems():
+            logger.debug("id, obj: %s, %s" % (str(this_id), str(obj)))
+            if select(int(this_id)):
+                logger.debug("Selected: %s" % str(this_id))
                 selected = True
                 for a in attrs:
                     if self.name == 'box':
@@ -189,16 +188,16 @@ class RegistrySlice(object):
                     else:
 
                         if a == 'ids':
-                            if int(id) not in attrs['ids']:
+                            if int(this_id) not in attrs['ids']:
                                 selected = False
                                 break
                         else:
                             try:
                                 item = obj._schema.getItem(a)
-                            except KeyError:
+                            except KeyError as err:
                                 from Ganga.GPIDev.Base import GangaAttributeError
-                                raise GangaAttributeError(
-                                    'undefined select attribute: %s' % str(a))
+                                logger.debug("KeyError getting item: '%s' from schema" % str(a))
+                                raise GangaAttributeError('undefined select attribute: %s' % str(a))
                             else:
                                 attrvalue = attrs[a]
 
@@ -228,10 +227,10 @@ class RegistrySlice(object):
                                             selected = False
                                             break
                 if selected:
-                    callback(id, obj)
+                    callback(this_id, obj)
 
     def copy(self, keep_going):
-        slice = self.__class__("copy of %s" % self.name)
+        this_slice = self.__class__("copy of %s" % self.name)
         for id, obj in self.objects.iteritems():
             #obj = _unwrap(obj)
             copy = obj.clone()
@@ -245,37 +244,34 @@ class RegistrySlice(object):
                 else:
                     reg._add(copy)
                     new_id = copy._getRegistryID()
-            slice.objects[new_id] = copy
-        return slice
+            this_slice.objects[new_id] = copy
+        return this_slice
 
     def __contains__(self, j):
         return j.id in self.objects
 
-    def __call__(self, id):
+    def __call__(self, this_id):
         """ Retrieve an object by id.
         """
-        if isinstance(id, str):
-            if id.isdigit():
-                id = int(id)
+        if isinstance(this_id, str):
+            if this_id.isdigit():
+                this_id = int(this_id)
             else:
-                matches = [o for o in self.objects if fnmatch.fnmatch(
-                    o._getRegistry()._getName(o), id)]
+                matches = [o for o in self.objects if fnmatch.fnmatch(o._getRegistry()._getName(o), this_id)]
                 if len(matches) > 1:
-                    logger.error(
-                        'Multiple Matches: Wildcards are allowed for ease of matching, however')
-                    logger.error(
-                        '                  to keep a uniform response only one item may be matched.')
-                    logger.error(
-                        '                  If you wanted a slice, please use the select method')
-                    raise RegistryKeyError("Multiple matches for id='%s':%s" % (
-                        id, str(map(lambda x: x._getRegistry()._getName(x), matches))))
+                    logger.error('Multiple Matches: Wildcards are allowed for ease of matching, however')
+                    logger.error('                  to keep a uniform response only one item may be matched.')
+                    logger.error('                  If you wanted a slice, please use the select method')
+                    raise RegistryKeyError("Multiple matches for id='%s':%s" % (this_id, str(map(lambda x: x._getRegistry()._getName(x), matches))))
                 if len(matches) < 1:
                     return
                 return matches[0]
         try:
-            return self.objects[id]
-        except KeyError:
-            raise RegistryKeyError('Object id=%d not found' % id)
+            return self.objects[this_id]
+        except KeyError as err:
+            logger.debug('Object id=%d not found' % this_id)
+            logger.deubg("%s" % str(err))
+            raise RegistryKeyError('Object id=%d not found' % this_id)
 
     def __iter__(self):
         "Iterator for the objects. "
@@ -336,22 +332,32 @@ class RegistrySlice(object):
             slice.objects[id] = obj
         return slice
 
+    @staticmethod
+    def _getatr(obj, members):
+        val = getattr(obj, members[0])
+        if len(members) > 1:
+            return str(RegistrySlice._getatr(val, members[1:]))
+        else:
+            return str(val)
+
     def _get_display_value(self, obj, item):
-        def getatr(obj, members):
-            val = getattr(obj, members[0])
-            if len(members) > 1:
-                return str(getatr(val, members[1:]))
-            else:
-                return str(val)
         try:
             try:
-                f = self._display_columns_functions[item]
-                val = f(obj)
-            except KeyError:
-                val = getatr(obj, item.split('.'))
+                if item in self._display_columns_functions:
+                    display_func = self._display_columns_functions[item]
+                    val = display_func(obj)
+                else:
+                    val = self._getatr(obj, item.split('.'))
+            except KeyError as err:
+                logger.debug("_get_display_value KeyError: %s" % str(err))
+                logger.debug("item: \"%s\"" % str(item))
+                #logger.debug("func: %s" % str(config[self._display_prefix + '_columns_functions']))
+                #val = self._getatr(obj, item.split('.'))
+                val = ""
             if not val and not item in self._display_columns_show_empty:
                 val = ""
-        except AttributeError:
+        except AttributeError as err:
+            logger.debug("AttibErr: %s" % str(err))
             val = ""
         return str(val)
 
@@ -368,19 +374,19 @@ class RegistrySlice(object):
         cnt = len(self)
         ds = "Registry Slice: %s (%d objects)\n" % (self.name, cnt)
 
-        format = "#"
+        this_format = "#"
         flist = []
         for d in self._display_columns:
             width = self._display_columns_width.get(d, default_width)
             flist.append("%" + str(width) + "s ")
-            #format += "%"+str(width)+"s  "
-        format = "|".join(flist)
-        format += "\n"
+            #this_format += "%"+str(width)+"s  "
+        this_format = "|".join(flist)
+        this_format += "\n"
 
         if cnt > 0:
             ds += "--------------\n"
-            ds += format % self._display_columns
-            ds += "-" * len(format % tuple([""] * len(self._display_columns))) + "\n"
+            ds += this_format % self._display_columns
+            ds += "-" * len(this_format % tuple([""] * len(self._display_columns))) + "\n"
 
         for obj in self.objects.values():
             colour = self._getColour(obj)
@@ -388,25 +394,25 @@ class RegistrySlice(object):
             vals = []
             for item in self._display_columns:
                 width = self._display_columns_width.get(item, default_width)
-                if obj._data is None and hasattr(obj, "_index_cache") and not obj._index_cache is None:
+                if stripProxy(obj).getNodeData():
                     try:
                         if item == "fqid":
-                            vals.append(
-                                str(obj._index_cache["display:" + item]))
+                            vals.append(str(stripProxy(obj).getNodeData()["display:" + item]))
                         else:
-                            vals.append(
-                                str(obj._index_cache["display:" + item])[0:width])
+                            vals.append(str(stripProxy(obj).getNodeData()["display:" + item])[0:width])
                         continue
-                    except KeyError:
+                    except KeyError as err:
+                        logger.debug("_display KeyError: %s" % str(err))
                         pass
                 if item == "fqid":
                     vals.append(self._get_display_value(obj, item))
                 else:
                     vals.append(self._get_display_value(obj, item)[0:width])
-            ds += markup(format % tuple(vals), colour)
+            ds += markup(this_format % tuple(vals), colour)
         return ds
 
     __str__ = _display
 
     def _id(self):
         return id(self)
+

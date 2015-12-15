@@ -1,10 +1,9 @@
 from Ganga.GPIDev.Base.Objects import GangaObject
 from Ganga.GPIDev.Base.Filters import allComponentFilters
-from Ganga.GPIDev.Base.Proxy import addProxy, isType, getProxyAttr, stripProxy, TypeMismatchError
+from Ganga.GPIDev.Base.Proxy import isProxy, addProxy, isType, getProxyAttr, stripProxy, TypeMismatchError, ReadOnlyObjectError
 from Ganga.GPIDev.Base.VPrinter import full_print, summary_print
 from Ganga.GPIDev.Schema.Schema import ComponentItem, Schema, SimpleItem, Version
 from Ganga.Utility.util import containsGangaObjects
-from Ganga.GPIDev.Base.Proxy import ReadOnlyObjectError, isType
 import copy
 import sys
 
@@ -28,6 +27,7 @@ def makeGangaList(_list, mapfunction=None, parent=None, preparable=False):
     if mapfunction is not None:
         _list = map(mapfunction, _list)
 
+    #logger.debug("Making a GangaList of size: %s" % str(len(_list)))
     result = makeGangaListByRef(_list)
 
     result._is_preparable = preparable
@@ -55,10 +55,8 @@ def stripGangaList(_list):
 def makeGangaListByRef(_list):
     """Faster version of makeGangaList. Does not make a copy of _list but use it by reference."""
     result = GangaList()
-    _bare_list = []
-    for element in _list:
-        _bare_list.append(stripProxy(element))
-    result._list = _bare_list
+    temp_list = [stripProxy(element) for element in _list]
+    result._list = temp_list
     return result
 
 
@@ -90,8 +88,7 @@ class GangaList(GangaObject):
     _hidden = 1
     _enable_plugin = 1
     _name = 'GangaList'
-    _schema = Schema(Version(1, 0), {
-                                     '_list': ComponentItem(defvalue=[], doc='The raw list', hidden=1, category='internal'),
+    _schema = Schema(Version(1, 0), {'_list': ComponentItem(defvalue=[], doc='The raw list', hidden=1, category='internal'),
                                      '_is_preparable': SimpleItem(defvalue=False, doc='defines if prepare lock is checked', hidden=1),
                                     })
     _enable_config = 1
@@ -102,31 +99,40 @@ class GangaList(GangaObject):
 
     def __construct__(self, args):
 
+        #super(GangaList, self).__construct__(args)
+
         if len(args) == 1:
-            if hasattr(args[0], '__len__'):
+            if isType(args[0], (len, GangaList, tuple)):
                 for element_i in args[0]:
-                    self._list.append( strip_proxy(element_i))
+                    self._list.expand(strip_proxy(element_i))
             elif _list is None:
                 self._list = None
             else:
                 raise GangaError("Construct: Attempting to assign a non list item: %s to a GangaList._list!" % str(value))
         else:
             super(GangaList, self).__construct__(args)
+
         return
 
     # convenience methods
-    def is_list(self, obj):
-        result = (obj is not None) and (isType(obj, GangaList) or isinstance(obj, list))
+    @staticmethod
+    def is_list(obj):
+        result = (obj is not None) and isType(obj, (GangaList, list, tuple))
         return result
+
+    @staticmethod
+    def has_proxy_element(_list):
+        return all([isProxy(element) for element in _list])
 
     ## Attempt to prevent raw assignment of _list causing Proxied objects to get inside the GangaList
     def _attribute_filter__set__(self, name, value):
+        logger.debug("GangaList filter")
         if name == "_list":
             if is_list(value):
-                new_list = []
-                for element_i in value:
-                    new_list.append(strip_proxy(element_i))
-                return new_list
+                if has_proxy_elemnt(value):
+                    return [stripProxy(element) for element in value]
+                else:
+                    return value
             elif _list is None:
                 return None
             else:
@@ -159,8 +165,8 @@ class GangaList(GangaObject):
 
         def applyFilter(obj, item):
             category = item['category']
-            filter = allComponentFilters[category]
-            filter_obj = filter(obj, item)
+            this_filter = allComponentFilters[category]
+            filter_obj = this_filter(obj, item)
             if filter_obj is None:
                 raise TypeMismatchError('%s is not of type %s.' % (str(obj), category))
             return filter_obj
@@ -194,16 +200,19 @@ class GangaList(GangaObject):
 
         result = []
         for o in self._list:
-            category = o._category
-            if not category in result:
-                result.append(category)
+            if hasattr(stripProxy(o), 'category'):
+                category = o._category
+                if not category in result:
+                    result.append(category)
+            else:
+                result.append(type(o))
         return result
 
     def _readonly(self):
-        if self._is_preparable and hasattr(self, '_parent'):
-            if self._parent._category == 'applications' and hasattr(self._parent, 'is_prepared'):
+        if self._is_preparable and hasattr(self, '_getParent'):
+            if self._getParent()._category == 'applications' and hasattr(self._getParent(), 'is_prepared'):
                 from Ganga.GPIDev.Lib.File.File import ShareDir
-                return (isType(self._parent.is_prepared, ShareDir) or super(GangaList, self)._readonly())
+                return (isType(self._getParent().is_prepared, ShareDir) or super(GangaList, self)._readonly())
         return super(GangaList, self)._readonly()
 
     def checkReadOnly(self):
@@ -256,7 +265,14 @@ class GangaList(GangaObject):
 
     def __deepcopy__(self, memo):
         """Bypass any checking when making the copy"""
-        return makeGangaList(_list=copy.deepcopy(self._list, memo))
+        #logger.info("memo: %s" % str(memo))
+        #logger.info("self.len: %s" % str(len(self._list)))
+        if self._list != []:
+            return makeGangaList(_list=copy.deepcopy(self._list, memo), preparable=self._is_preparable)
+        else:
+            new_list = GangaList()
+            new_list._is_preparable = self._is_preparable
+            return new_list
         #super(GangaList, self).__deepcopy__(memo)
 
     def __eq__(self, obj_list):
@@ -286,6 +302,7 @@ class GangaList(GangaObject):
         return self._list.__gt__(self.strip_proxy_list(obj_list))
 
     def __hash__(self):
+        logger.info("hash")
         result = 0
         for element in self:
             result ^= hash(element)
@@ -339,7 +356,6 @@ class GangaList(GangaObject):
 
     def __reversed__(self):
         """Implements the __reversed__ list method introduced in 2.4"""
-
         return reversed(self._list)
 
     def _export___reversed__(self):
@@ -369,18 +385,22 @@ class GangaList(GangaObject):
         self.__setitem__(index, obj)
 
     def __setslice__(self, start, end, obj_list):
-        self._list.__setslice__(
-            start, end, self.strip_proxy_list(obj_list, True))
+        self._list.__setslice__(start, end, self.strip_proxy_list(obj_list, True))
 
     def _export___setslice__(self, start, end, obj_list):
         self.checkReadOnly()
         self.__setslice__(start, end, obj_list)
 
     def __repr__(self):
-        return self.toString()
+        #logger.info("__repr__")
+        #return self.toString()
+        #import traceback
+        #traceback.print_stack()
+        return str("<GangaList at: %s>" % str(hex(abs(id(self)))))
 
     def __str__(self):
-        return self.__repr__()
+        #logger.info("__str__")
+        return self.toString()
 
     def append(self, obj, my_filter=True):
         self._list.append(self.strip_proxy(obj, my_filter))
@@ -470,8 +490,7 @@ class GangaList(GangaObject):
                 return
 
             if (maxLen != -1) and (self_len > maxLen):
-                out.write(
-                    decorateListEntries(self_len, type(self[0]).__name__))
+                out.write(decorateListEntries(self_len, type(self[0]).__name__))
                 return
             else:
                 summary_print(self, out)

@@ -57,6 +57,10 @@ class BoxMetadataObject(GangaObject):
 
 class BoxRegistry(Registry):
 
+    def __init__(self, name, doc, dirty_flush_counter=10, update_index_time=30, dirty_max_timeout=60, dirty_min_timeout=30):
+        super(BoxRegistry, self).__init__(name, doc, dirty_flush_counter, update_index_time, dirty_max_timeout, dirty_min_timeout)
+
+
     def _setName(self, obj, name):
         nobj = self.metadata[self.find(obj)]
         obj._getWriteAccess()
@@ -79,8 +83,8 @@ class BoxRegistry(Registry):
         cached_values = ['status', 'id', 'name']
         c = {}
         for cv in cached_values:
-            if cv in obj._data:
-                c[cv] = obj._data[cv]
+            if cv in obj.getNodeData():
+                c[cv] = obj.getNodeAttribute(cv)
         slice = BoxRegistrySlice("tmp")
         for dpv in slice._display_columns:
             c["display:" + dpv] = slice._get_display_value(obj, dpv)
@@ -126,8 +130,7 @@ class BoxRegistry(Registry):
         if obj._category == 'applications':
             if hasattr(obj, 'is_prepared'):
                 if obj.is_prepared is not None and obj.is_prepared is not True:
-                    logger.debug(
-                        'Adding a prepared application to the box and increasing the shareref counter')
+                    logger.debug('Adding a prepared application to the box and increasing the shareref counter')
                     obj.incrementShareCounter(obj.is_prepared.name)
 
         obj = obj.clone()

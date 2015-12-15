@@ -83,7 +83,8 @@ class Interactive(IBackend):
                     match = regexp.search(statString)
                     if match:
                         value = int(match.group("value"))
-            except IOError:
+            except IOError as err:
+                logger.debug("IOError: %s" % str(err))
                 pass
         return value
 
@@ -265,6 +266,7 @@ class Interactive(IBackend):
     def updateMonitoringInformation(jobs):
 
         for j in jobs:
+            stripProxy(j)._getWriteAccess()
 
             if not j.backend.id:
                 id = j.backend._getIntFromOutfile("PID:", "__id__")

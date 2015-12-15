@@ -74,10 +74,10 @@ class Transform(GangaObject):
         id = "%i:%i" % (
             self._getParent().id, self._getParent().transforms.index(self))
         for j in GPI.jobs:
-            if "tasks_id" in stripProxy(j.application)._data:
+            if "tasks_id" in stripProxy(j.application).getNodeData():
                 # print "tasks_id of jobid ", j.fqid,
-                # stripProxy(j.application)._data["tasks_id"], id
-                if stripProxy(j.application)._data["tasks_id"].endswith(id):
+                # stripProxy(j.application).getNodeAttribute("tasks_id"), id
+                if stripProxy(j.application).getNodeAttribute("tasks_id").endswith(id):
                     try:
                         if j.subjobs:
                             for sj in j.subjobs:
@@ -118,8 +118,8 @@ class Transform(GangaObject):
         id = "%i:%i" % (
             self._getParent().id, self._getParent().transforms.index(self))
         for j in GPI.jobs:
-            if "tasks_id" in stripProxy(j.application)._data:
-                if stripProxy(j.application)._data["tasks_id"] == id:
+            if "tasks_id" in stripProxy(j.application).getNodeData():
+                if stripProxy(j.application).getNodeAttribute("tasks_id") == id:
                     try:
                         if j.subjobs:
                             for sj in j.subjobs:
@@ -264,9 +264,9 @@ class Transform(GangaObject):
 
     def checkTaskApplication(self, app):
         """warns the user if the application is not compatible """
-        if app == None:
+        if app is None:
             return None
-        if not "tasks_id" in stripProxy(app)._data:
+        if not "tasks_id" in stripProxy(app).getNodeData():
             return taskApp(app)
         return app
 
@@ -469,8 +469,7 @@ class Transform(GangaObject):
             id = str(task.transforms.index(self))
         else:
             id = "?"
-        o = markup("#%s: %s '%s'\n" % (
-            id, self.__class__.__name__, self.name), status_colours[self.status])
+        o = markup("#%s: %s '%s'\n" % (id, getName(self), self.name), status_colours[self.status])
         i = 0
         partitions = sorted(self._partition_status.keys())
         for c in partitions:
@@ -486,9 +485,8 @@ class Transform(GangaObject):
         logger.info(o)
 
     def info(self):
-        logger.info(markup(
-            "%s '%s'" % (self.__class__.__name__, self.name), status_colours[self.status]))
-        logger.info("* backend: %s" % self.backend.__class__.__name__)
+        logger.info(markup("%s '%s'" % (getName(self), self.name), status_colours[self.status]))
+        logger.info("* backend: %s" % getName(self.backend))
         logger.info("Application:")
         self.application.printTree()
 

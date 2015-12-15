@@ -22,6 +22,7 @@ logger = getLogger()
 DIRAC_ENV = {}
 DIRAC_INCLUDE = ''
 Dirac_Env_Lock = threading.Lock()
+Dirac_Proxy_Lock = threading.Lock()
 
 # /\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\/\
 

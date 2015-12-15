@@ -10,7 +10,6 @@ from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList, makeGangaListByRef
 from Ganga.Utility.Config import config_scope
 
 from Ganga.Utility.Plugin import PluginManagerError, allPlugins
-from Ganga.GPIDev.Schema import Version
 
 from Ganga.GPIDev.Base.Objects import GangaObject
 from Ganga.GPIDev.Schema import Schema, Version
@@ -45,15 +44,21 @@ class XMLFileError(GangaException):
             err = ''
         return "XMLFileError: %s %s" % (self.message, err)
 
-def to_file(j, f=None, ignore_subs=''):
+def _raw_to_file(j, fobj=None, ignore_subs=''):
+    vstreamer = VStreamer(out=fobj, selection=ignore_subs)
+    vstreamer.begin_root()
+    stripProxy(j).accept(vstreamer)
+    vstreamer.end_root()
+
+def to_file(j, fobj=None, ignore_subs=''):
+    #used to debug write problems - rcurrie
+    #_raw_to_file(j, fobj, ignore_subs)
+    #return
     try:
-        vstreamer = VStreamer(out=f, selection=ignore_subs)
-        vstreamer.begin_root()
-        stripProxy(j).accept(vstreamer)
-        vstreamer.end_root()
+        _raw_to_file(j, fobj, ignore_subs)
     except Exception as err:
         logger.error("XML to-file error for file:\n%s" % (str(err)))
-        raise XMLFileError(err)
+        raise XMLFileError(err, "to-file error")
 
 # Faster, but experimental version of to_file without accept()
 # def to_file(j,f=None,ignore_subs=''):
@@ -71,16 +76,18 @@ def to_file(j, f=None, ignore_subs=''):
 # * AssertionError (corruption: multiple objects in <root>...</root>
 # * Exception (probably corrupted data problem)
 
+def _raw_from_file(f):
+    # logger.debug('----------------------------')
+    ###logger.debug('Parsing file: %s',f.name)
+    obj, errors = Loader().parse(f.read())
+    return obj, errors
 
 def from_file(f):
     try:
-        # logger.debug('----------------------------')
-        ###logger.debug('Parsing file: %s',f.name)
-        obj, errors = Loader().parse(f.read())
-        return obj, errors
+        return _raw_from_file(f)
     except Exception as err:
         logger.error("XML from-file error for file:\n%s" % str(err))
-        raise XMLFileError(err)
+        raise XMLFileError(err, "from-file error")
 
 ##########################################################################
 # utilities
@@ -110,7 +117,7 @@ def fastXML(obj, indent='', ignore_subs=''):
     elif hasattr(obj, '_data'):
         v = obj._schema.version
         sl = ['\n', indent, '<class name="%s" version="%i.%i" category="%s">\n' % (getName(obj), v.major, v.minor, obj._category)]
-        for k, o in obj._data.iteritems():
+        for k, o in obj.getNodeData().iteritems():
             if k != ignore_subs:
                 try:
                     if not obj._schema[k]._meta["transient"]:
@@ -246,6 +253,8 @@ class EmptyGangaObject(GangaObject):
     _category = "internal"
     _hidden = 1
 
+    def __init__(self):
+        super(EmptyGangaObject, self).__init__()
 
 
 class Loader(object):
@@ -311,7 +320,7 @@ class Loader(object):
                     else:
                         # make a new ganga object
                         obj = super(cls, cls).__new__(cls)
-                        obj._data = {}
+                        obj.setNodeData({})
                 self.stack.append(obj)
 
             # push the attribute name on the stack
@@ -342,7 +351,7 @@ class Loader(object):
                 aname = self.stack.pop()
                 obj = self.stack[-1]
                 # update the object's attribute
-                obj._data[aname] = value
+                obj.setNodeAttribute(aname, value)
 
             # when </value> is seen the value_construct buffer (CDATA) should
             # be a python expression (e.g. quoted string)
@@ -370,12 +379,11 @@ class Loader(object):
             if name == 'class':
                 obj = self.stack[-1]
                 for attr, item in obj._schema.allItems():
-                    if not attr in obj._data:
+                    if not attr in obj.getNodeData():
                         if item._meta["sequence"] == 1:
-                            obj._data[attr] = makeGangaListByRef(
-                                obj._schema.getDefaultValue(attr))
+                            obj.setNodeAttribute(attr, makeGangaListByRef(obj._schema.getDefaultValue(attr)))
                         else:
-                            obj._data[attr] = obj._schema.getDefaultValue(attr)
+                            obj.setNodeAttribute(attr, obj._schema.getDefaultValue(attr))
 
                 obj.__setstate__(obj.__dict__)  # this sets the parent
 
@@ -403,7 +411,7 @@ class Loader(object):
         obj = self.stack[-1]
         # Raise Exception if object is incomplete
         for attr, item in obj._schema.allItems():
-            if not attr in obj._data:
+            if not attr in obj.getNodeData():
                 raise AssertionError("incomplete XML file")
         return obj, self.errors
 

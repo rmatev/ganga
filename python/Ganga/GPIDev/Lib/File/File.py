@@ -70,7 +70,10 @@ class File(GangaObject):
             expanded = expandfilename(v)
             # if it is not already an absolute filename
             if not urlprefix.match(expanded):
-                self.name = os.path.abspath(expanded)
+                if os.path.exists(os.path.abspath(expanded)):
+                    self.name = os.path.abspath(expanded)
+                else:
+                    self.name = v
             else:  # bugfix #20545
                 self.name = expanded
         else:
@@ -84,7 +87,7 @@ class File(GangaObject):
     def getPathInSandbox(self):
         """return a relative location of a file in a sandbox: subdir/name"""
         from Ganga.Utility.files import real_basename
-        return self.subdir + os.sep + real_basename(self.name)
+        return os.path.join(self.subdir, real_basename(self.name))
 
     def exists(self):
         """check if the file exists (as specified by 'name')"""
@@ -175,6 +178,8 @@ class ShareDir(GangaObject):
         # shareref.increase(self.name)
         # shareref.decrease(self.name)
 
+    def __deepcopy__(self, memo):
+        return super(ShareDir, self).__deepcopy__(memo)
 
 # this constructor enables the ability to add files to a ShareDir at initiation by calling
 # ShareDir('filetoadd')

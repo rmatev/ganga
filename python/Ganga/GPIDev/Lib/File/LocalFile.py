@@ -185,7 +185,7 @@ class LocalFile(IGangaFile):
                 return False
 
         # check if single file exists (no locations field to try)
-        job = self._getParent()
+        job = self.getJobObject()
         if job:
             fname = self.namePattern
             if self.compressed:
@@ -201,7 +201,7 @@ class LocalFile(IGangaFile):
         for this_file in self.getFilenameList():
             _actual_delete = False
             keyin = None
-            while keyin == None:
+            while keyin is None:
                 keyin = raw_input("Do you want to remove the LocalFile: %s ? ([y]/n) " % str(this_file))
                 if keyin in ['y', '']:
                     _actual_delete = True

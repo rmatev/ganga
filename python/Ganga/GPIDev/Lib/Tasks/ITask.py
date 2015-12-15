@@ -41,7 +41,7 @@ class ITask(GangaObject):
     _category = 'tasks'
     _name = 'ITask'
     _exportmethods = ['run', 'appendTransform', 'overview', 'getJobs', 'remove', 'clone', 'pause', 'check', 'setBackend', 'setParameter',
-                      'insertTransform', 'removeTransform', 'table', 'resetUnitsByStatus', 'removeUnusedJobs']
+                      'insertTransform', 'removeTransform', 'table', 'resetUnitsByStatus', 'removeUnusedJobs', 'n_all', 'n_status', 'n_all']
 
     _tasktype = "ITask"
 
@@ -228,7 +228,7 @@ class ITask(GangaObject):
            Warns if applications are not affected because they lack the parameter"""
         for name, parm in args.iteritems():
             for tf in [t for t in self.transforms if t.application]:
-                if name in tf.application._data:
+                if name in tf.application.getNodeData():
                     addProxy(tf.application).__setattr__(name, parm)
                 else:
                     logger.warning("Transform %i was not affected!", tf.name)
@@ -311,7 +311,7 @@ class ITask(GangaObject):
 
     def table(self):
         from Ganga.GPI import tasks
-        tasks[self.id:self.id].table()
+        t = tasks.table(id=self.id)
 
     def overview(self, status=''):
         """ Show an overview of the Task """
@@ -320,15 +320,12 @@ class ITask(GangaObject):
                 "Not a valid status for unitOverview. Possible options are: 'bad', 'hold', 'running', 'completed', 'new'.")
             return
 
-        print(
-            "Lists the units in each transform and give the state of the subjobs")
+        print("Lists the units in each transform and give the state of the subjobs")
         print('')
         print(" " * 41 + "Active\tSub\tRun\tComp\tFail\tMinor\tMajor")
         for trfid in range(0, len(self.transforms)):
-            print(
-                "----------------------------------------------------------------------------------------------------------------------")
-            print("----   Transform %d:  %s" %
-                        (trfid, self.transforms[trfid].name))
+            print("----------------------------------------------------------------------------------------------------------------------")
+            print("----   Transform %d:  %s" % (trfid, self.transforms[trfid].name))
             print('')
             self.transforms[trfid].overview(status)
             print('')
@@ -349,3 +346,4 @@ class ITask(GangaObject):
         """Remove any unused jobs"""
         for trf in self.transforms:
             trf.removeUnusedJobs()
+
