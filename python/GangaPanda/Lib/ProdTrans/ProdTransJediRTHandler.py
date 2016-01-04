@@ -56,6 +56,12 @@ class ProdTransJediRTHandler(IRuntimeHandler):
         taskParamMap['transHome'] = app.home_package
         taskParamMap['transformation'] = app.transformation
 
+        taskParamMap['jobParameters'] = [
+            {'type':'constant',
+             'value': '-j "" --sourceURL ${SURL}',
+             },
+            ]
+
         configSys = getConfig('System')
         gangaver = configSys['GANGA_VERSION'].lower()
         if not gangaver:
@@ -73,8 +79,8 @@ class ProdTransJediRTHandler(IRuntimeHandler):
             taskParamMap['noEmail'] = True
         if job.backend.requirements.skipScout:
             taskParamMap['skipScout'] = True
-        if not app.atlas_exetype in ["ATHENA", "TRF"]:
-            taskParamMap['nMaxFilesPerJob'] = job.backend.requirements.maxNFilesPerJob
+        #if not app.atlas_exetype in ["ATHENA", "TRF"]:
+        #    taskParamMap['nMaxFilesPerJob'] = job.backend.requirements.maxNFilesPerJob
         if job.backend.requirements.disableAutoRetry:
             taskParamMap['disableAutoRetry'] = 1
 
@@ -89,6 +95,14 @@ class ProdTransJediRTHandler(IRuntimeHandler):
 
         # TODO: This should be fixed properly!
         #taskParamMap['jobParameters'] = app.job_parameters
+
+        self.dbrelease = app.dbrelease
+        if self.dbrelease != '' and self.dbrelease != 'LATEST' and self.dbrelease.find(':') == -1:
+            raise ApplicationConfigurationError(None,"ERROR : invalid argument for DB Release. Must be 'LATEST' or 'DatasetName:FileName'")
+
+        # validate dbrelease
+        if self.dbrelease != "LATEST":
+            self.dbrFiles,self.dbrDsList = getDBDatasets(self.job_options,'',self.dbrelease)
 
         # param for DBR
         if self.dbrelease != '':
@@ -148,5 +162,22 @@ class ProdTransJediRTHandler(IRuntimeHandler):
 
         return taskParamMap
 
+    def prepare(self,app,appsubconfig,appmasterconfig,jobmasterconfig):
+        '''prepare the subjob specific configuration'''
+
+        from pandatools import Client
+        from pandatools import AthenaUtils
+        from taskbuffer.JobSpec import JobSpec
+        from taskbuffer.FileSpec import FileSpec
+
+        job = app._getParent()
+        masterjob = job._getRoot()
+
+        logger.debug('AthenaJediRTHandler prepare called for %s', job.getFQID('.'))
+
+#       in case of a simple job get the dataset content, otherwise subjobs are filled by the splitter
+
+        return {}
+    
 from Ganga.GPIDev.Adapters.ApplicationRuntimeHandlers import allHandlers
 allHandlers.add('ProdTrans', 'Jedi', ProdTransJediRTHandler)
