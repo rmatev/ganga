@@ -34,6 +34,7 @@ class JediRequirements(GangaObject):
         'nEventsPerFile'  : SimpleItem(defvalue=0,typelist=['type(None)','int'],copyable=1,doc='Number of events per file to run over'),
         'nGBPerJob'  : SimpleItem(defvalue=0,typelist=['type(None)','int'],copyable=1,doc='Instantiate one sub job per NGBPERJOB GB of input files. nGBPerJob=MAX sets the size to the default maximum value'),
         'maxNFilesPerJob'  : SimpleItem(defvalue=200,typelist=['type(None)','int'],copyable=1,doc='The maximum number of files per job is 200 by default since too many input files result in a too long command-line argument on WN which crashes the job. This option relax the limit.'),
+        'outputFileType' : SimpleItem(defvalue = '',protected=0,copyable=1,doc='Specify the output file type for Jedi'),
     })
 
     _category = 'JediRequirements'

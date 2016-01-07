@@ -223,6 +223,7 @@ class ProdTransPandaRTHandler(IRuntimeHandler):
         lfspec.dataset = jspec.destinationDBlock
         lfspec.type = 'log'
         jspec.addFile(lfspec)
+
         
         return jspec
 
