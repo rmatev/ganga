@@ -60,7 +60,7 @@ class GaudiPython(GaudiBase):
     j=Job(application=app,backend=Dirac(),inputdata=ds)
     j.submit()
 
-"""
+    """
     _name = 'GaudiPython'
     _category = 'applications'
     _exportmethods = GaudiBase._exportmethods[:]

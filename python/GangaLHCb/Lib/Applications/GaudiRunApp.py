@@ -7,9 +7,9 @@ from Ganga.GPIDev.Lib.File import ShareDir
 class GaudiRun(GangaObject):
 
     _schema = Schema(Version(1,0), {
-        'is_prepared' : SimpleItem(defvalue=None, typelist=[bool, ShareDir], doc="Is the application prepared"),
-        'extraopts' : SimpleItem(defvalue=None, typelist=[list], doc="Extra options passed to the "),
-        'args' : SimpleItem(defvalue=['-T']),
+        'is_prepared' : SimpleItem(defvalue=None, typelist=[bool, ShareDir, None], doc="Is the application prepared"),
+        'args' : SimpleItem(defvalue=['-T'], doc="Additional arguments passed to the Configuration stage of the application"),
+        'extraopts' : SimpleItem(defvalue='', doc="Extra options passed to the prepare stage of the application"),
         'platform' : SimpleItem(defvalue= 'x86_64-slc6-gcc49-opt', doc="Platform to be used to build the application"),
         #'lb-runOptions' : SimpleItem(defvalue= ''),
         'location' : SimpleItem(defvalue= '', typelist=[str], doc="Location of the Gaudi Application on disk"),
@@ -26,28 +26,38 @@ class GaudiRun(GangaObject):
 
     def prepare(self, extraOpts=''):
         ## Standard prepare method for the job
+
         GaudiSandbox = self.__prepare_sandbox(extraOpts)
+
+        self.is_prepared = ShareDir()
+
+        share_dir = os.path.join(expandfilename(getConfig('Configuration')['gangadir']),
+                                        'shared', getConfig('Configuration')['user'],
+                                        self.is_prepared.name)
 
         ##TODO Add the GaudiSandbox to the full sandbox
 
+        # add the newly created shared directory into the metadata system
+        # if the app is associated with a persisted object
+        self.checkPreparedHasParent(self)
+        # Calculate the hashes and so on
+        self.post_prepare()
 
-        ##TODO register the full prepared sandbox with the prep registry
 
-
-    def __prepare_sandbox(self, extraOpts=''):
+    def __prepare_sandbox(self, extraopts=''):
         ###TODO once we have a make target for the sandbox I'll implement this
+        ###TODO want to save the extraOpts used to generate the sandbox so that we can reproduce it if required
 
-        #all_Opts = self.lb-runOptions
-        all_Opts = ''
+        all_Opts = self.extraopts
 
-        if all_Opts != '' and extraOpts != '':
-            logger.info('Adding Extra options \"%s\" to lb-runOptions' % str(extraOpts))
+        if all_Opts != '' and extraopts != '':
+            logger.info('Adding Extra options \"%s\" to lb-runOptions' % str(extraopts))
 
-        all_Opts = "%s %s" % (all_Opts, extraOpts)
+        all_Opts = "%s %s" % (all_Opts, extraopts)
 
-        #self.lb-runOptions = all_Opts
+        make_command = "FIXME HERE"
 
-        self.run_cmd( 'make sandboxfile %s' % str(all_Opts) )
+        self.run_cmd( '%s %s' % (str(make_command), str(all_Opts)) )
 
     def __get_dest_env(self):
         return

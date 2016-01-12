@@ -134,7 +134,7 @@ class Executable(IPrepareApp):
             else:
                 try:
                     parent_job = self.getJobObject()
-                except:
+                except AssertError:
                     parent_job = None
                     pass
                 if parent_job is not None:
