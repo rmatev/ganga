@@ -1,18 +1,19 @@
 
-from Ganga.GPIDev.Base.Schema import Schema, Version
+from Ganga.GPIDev.Schema import Schema, Version, SimpleItem
 from Ganga.GPIDev.Base.Objects import GangaObject
 from Ganga.Utility.execute import execute
+from Ganga.GPIDev.Lib.File import ShareDir
 
 class GaudiRun(GangaObject):
 
     _schema = Schema(Version(1,0), {
-        'is_prepared' : SimpleItem(defvalue=None),
-        'extraopts' : SimpleItem(defvalue=None),
+        'is_prepared' : SimpleItem(defvalue=None, typelist=[bool, ShareDir], doc="Is the application prepared"),
+        'extraopts' : SimpleItem(defvalue=None, typelist=[list], doc="Extra options passed to the "),
         'args' : SimpleItem(defvalue=['-T']),
-        'platform' : SimpleItem(defvalue= 'x86_64-slc6-gcc49-opt'),
-        'lb-runOptions' : SimpleItem(defvalue= ''),
-        'location' : SimpleItem(defvalue= ''),
-        'optsfile' :  SimpleItem(defvalue = []),
+        'platform' : SimpleItem(defvalue= 'x86_64-slc6-gcc49-opt', doc="Platform to be used to build the application"),
+        #'lb-runOptions' : SimpleItem(defvalue= ''),
+        'location' : SimpleItem(defvalue= '', typelist=[str], doc="Location of the Gaudi Application on disk"),
+        'optsfile' :  SimpleItem(defvalue = [], typelist=[list], doc="Standard opts files"),
         #'packageName' : SimpleItem(defvalue='', optional=1)
          })
     _category = 'applications'
@@ -23,17 +24,28 @@ class GaudiRun(GangaObject):
         return
 
 
+    def prepare(self, extraOpts=''):
+        ## Standard prepare method for the job
+        GaudiSandbox = self.__prepare_sandbox(extraOpts)
+
+        ##TODO Add the GaudiSandbox to the full sandbox
+
+
+        ##TODO register the full prepared sandbox with the prep registry
+
+
     def __prepare_sandbox(self, extraOpts=''):
         ###TODO once we have a make target for the sandbox I'll implement this
 
-        all_Opts = self.lb-runOptions
+        #all_Opts = self.lb-runOptions
+        all_Opts = ''
 
         if all_Opts != '' and extraOpts != '':
             logger.info('Adding Extra options \"%s\" to lb-runOptions' % str(extraOpts))
 
         all_Opts = "%s %s" % (all_Opts, extraOpts)
 
-        self.lb-runOptions = all_Opts
+        #self.lb-runOptions = all_Opts
 
         self.run_cmd( 'make sandboxfile %s' % str(all_Opts) )
 
@@ -56,7 +68,9 @@ class GaudiRun(GangaObject):
         my_cmd = "cd %s && ./run bash %s" % (str(self.location), str(scriptName))
 
         timeout = 300.
-        execute( my_cmd, timeout=timeout, env=None, cwd=self.location, shell=shell, python_setup=False, eval_includes=None, update_env=False)
+        execute( my_cmd, timeout=timeout, env=None, cwd=self.location, shell=None, python_setup=False, eval_includes=None, update_env=False)
+
+        os.unlink(scriptName)
 
 
     def run_cmd(self, command):
@@ -84,6 +98,7 @@ class GaudiRun(GangaObject):
 
     def _get_default_version(self):
         ## TODO asses whether this is required
+        return
 
     def configure(self):
         return

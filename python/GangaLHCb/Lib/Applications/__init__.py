@@ -12,6 +12,8 @@ from GaudiPython import GaudiPython
 
 from Bender import Bender
 
+from GaudiRunApp import GaudiRun
+
 # Add any additional Packages required by the user in the .gangarc file
 from Ganga.Utility.Config import getConfig
 
@@ -46,7 +48,7 @@ for app in AppsBaseUtils.available_apps():
     logger.debug("Adding %s" % str(app))
 
 logger.debug("Adding apps")
-modules= compile(all_apps, '<string>', 'exec')
+modules= compile(all_apps, 'TraditionalGaudiApps', 'exec')
 exec modules
 
 logger.debug("Fin")
