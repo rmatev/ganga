@@ -212,7 +212,7 @@ class Registry(object):
         try:
             while this_id in self._inprogressDict.keys():
                 import time
-                logger.deubg("Getting item being operated on: %s" % this_id)
+                logger.debug("Getting item being operated on: %s" % this_id)
                 time.sleep(0.1)
             self._inprogressDict[this_id] = "_getitem"
             from Ganga.GPIDev.Base.Proxy import addProxy
@@ -395,8 +395,8 @@ class Registry(object):
                 self._update_index_timer = time.time()
 
             return sorted(self._objects.keys())
-        except Exception as err:
-            pass
+        #except Exception as err:
+        #    pass
         finally:
             self._lock.release()
 
@@ -421,8 +421,8 @@ class Registry(object):
                 self._update_index_timer = time.time()
 
             return sorted(self._objects.items())
-        except Exception as err:
-            pass
+        #except Exception as err:
+        #    pass
         finally:
             self._lock.release()
 
@@ -587,10 +587,11 @@ class Registry(object):
 
         self._lock.acquire()
         this_id = None
-        returnable = None
+        returnable_id = None
 
         try:
-            returnable = self.__safe_add(obj, force_index)
+            returnable_id = self.__safe_add(obj, force_index)
+            self._loaded_ids.append(returnable_id)
         except (RepositoryError) as err:
             raise err
         except Exception as err:
@@ -609,7 +610,7 @@ class Registry(object):
 
         self._updateIndexCache(obj)
 
-        return returnable
+        return returnable_id
 
     def _remove(self, obj, auto_removed=0):
         """ Private method removing the obj from the registry. This method always called.
@@ -892,7 +893,7 @@ class Registry(object):
             try:
                 if this_id in self.dirty_objs.keys() and self.checkShouldFlush():
                     self._flush([self._objects[this_id]])
-                    self._load([this_id])
+                    #self._load([this_id])
                     #self._updateIndexCache(self._objects[this_id])
                 if this_id not in self._loaded_ids:
                     self._load([this_id])
@@ -987,7 +988,7 @@ class Registry(object):
                     try:
                         if this_id in self.dirty_objs.keys() and self.checkShouldFlush():
                             self._flush([self._objects[this_id]])
-                            self._load([this_id])
+                            #self._load([this_id])
                         if this_id not in self._loaded_ids:
                             self._load([this_id])
                             self._loaded_ids.append(this_id)
