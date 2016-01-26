@@ -44,5 +44,5 @@ class SynchronisedObject(GenericWrapper):
             ignore = ()
         if lock is None:
             import threading
-            lock = threading.RLock()
+            lock = threading.Lock()
         GenericWrapper.__init__(self, obj, lock.acquire, lock.release, ignore)
