@@ -76,6 +76,7 @@ class MonitoringWorkerThread(GangaThread):
                     action = Qin.get(block=True, timeout=0.5)
                     break
                 except Queue.Empty:
+                    #pass
                     continue
 
             if self.should_stop():
@@ -220,6 +221,22 @@ class UpdateDict(object):
     def __init__(self):
         self.table = {}
 
+    def _runEntry(self, backendObj, backendCheckingFunction, jobList, timeoutMax=None):
+        try:
+            jSetSize = len(jSet)
+            log.debug("Lock acquire successful. Updating jSet %s with %s." % ([stripProxy(x).getFQID('.') for x in jSet], [stripProxy(x).getFQID('.') for x in jobList]))
+            jSet.update(jobList)
+            # If jSet is empty it was cleared by an update action
+            # i.e. the queue does not contain an update action for the
+            # particular backend any more.
+            if jSetSize:  # jSet not cleared
+                log.debug("%s backend job set exists. Added %s to it." % (backend, [stripProxy(x).getFQID('.') for x in jobList]))
+            else:
+                Qin.put(JobAction(backendCheckingFunction, self.table[backend].updateActionTuple()))
+                log.debug("Added new %s backend update action for jobs %s." % (backend, [stripProxy(x).getFQID('.') for x in self.table[backend].updateActionTuple()[1]]))
+        except Exception as err:
+            log.error("addEntry error: %s" % str(err))
+
     def addEntry(self, backendObj, backendCheckingFunction, jobList, timeoutMax=None):
         if not jobList:
             return
@@ -243,28 +260,19 @@ class UpdateDict(object):
         # i.e. It's like getting a friend in the queue to pay for your
         # purchases as well! ;p
         log.debug("*: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend, lock._RLock__count, lock._is_owned(), [x.id for x in jobList], Qin.qsize()))
-        if lock.acquire(False):
-            try:
-                jSetSize = len(jSet)
-                log.debug("Lock acquire successful. Updating jSet %s with %s." % ([stripProxy(x).getFQID('.') for x in jSet], [stripProxy(x).getFQID('.') for x in jobList]))
-                jSet.update(jobList)
-                # If jSet is empty it was cleared by an update action
-                # i.e. the queue does not contain an update action for the
-                # particular backend any more.
-                if jSetSize:  # jSet not cleared
-                    log.debug("%s backend job set exists. Added %s to it." % (backend, [stripProxy(x).getFQID('.') for x in jobList]))
-                else:
-                    Qin.put(JobAction(backendCheckingFunction, self.table[backend].updateActionTuple()))
-                    log.debug("Added new %s backend update action for jobs %s." % (backend, [stripProxy(x).getFQID('.') for x in self.table[backend].updateActionTuple()[1]]))
+        try:
+            if lock.acquire(False):
 
-            except Exception as err:
-                log.error("addEntry error: %s" % str(err))
-            finally:
-                lock.release()
+                try:
+                    self._runEntry()
+                except Exception as err:
+                    logger.warining("ERROR RUNNING ENTRY: %s" % str(err))
 
-            log.debug("**: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" %
-                    (backend, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
-            return True
+                log.debug("**: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
+                return True
+        finally:
+            lock.release()
+        
 
     def clearEntry(self, backend):
         if backend in self.table:
@@ -282,7 +290,8 @@ class UpdateDict(object):
             # Initial value and subsequent resets by timeoutCheck() will set the timeoutCounter
             # to a value just short of the max value to ensure that it the timeoutCounter is
             # not decremented simply because there are no updates occuring.
-            if entry.timeoutCounter == entry.timeoutCounterMax and entry.entryLock.acquire(False):
+            diff = (entry.timeoutCounter - entry.timeoutCounterMax)
+            if diff*diff<0.01 and entry.entryLock.acquire(False):
                 with release_when_done(entry.entryLock):
                     log.debug("%s has been reset. Acquired lock to begin countdown." % backend)
                     entry.timeLastUpdate = time.time()
@@ -395,7 +404,7 @@ def get_jobs_in_bunches(jobList_fromset, blocks_of_size=5, stripProxies=True):
 class JobRegistry_Monitor(GangaThread):
 
     """Job monitoring service thread."""
-    uPollRate = 0.5
+    uPollRate = 1.0
     minPollRate = 1.0
 
     def __init__(self, registry):
@@ -488,13 +497,14 @@ class JobRegistry_Monitor(GangaThread):
                     for i in range(int(self.uPollRate * 20)):
                         if self.enabled:
                             self.__mainLoopCond.wait(self.uPollRate * 0.05)
+                        else:
+                            if not self.alive:  # stopped?
+                                self.__cleanUp()
+                            # disabled, break to the outer while
+                            break
+                    self.__sleepCounter -= self.uPollRate
                     if not self.enabled:
-                        if not self.alive:  # stopped?
-                            self.__cleanUp()
-                        # disabled, break to the outer while
                         break
-                    else:
-                        self.__sleepCounter -= self.uPollRate
 
                 else:
                     log.debug("Run on Demand")
@@ -899,6 +909,8 @@ class JobRegistry_Monitor(GangaThread):
         lock.acquire()
         self._runningNow = True
 
+        updateDict_ts.clearEntry(getName(backendObj))
+
         try:
             log.debug("[Update Thread %s] Lock acquired for %s" % (currentThread, getName(backendObj)))
             #alljobList_fromset = IList(filter(lambda x: x.status in ['submitted', 'running'], jobListSet), self.stopIter)
@@ -915,7 +927,6 @@ class JobRegistry_Monitor(GangaThread):
             jobList_fromset = alljobList_fromset
             jobList_fromset.extend(masterJobList_fromset)
             # print jobList_fromset
-            updateDict_ts.clearEntry(getName(backendObj))
             try:
                 log.debug("[Update Thread %s] Updating %s with %s." % (currentThread, getName(backendObj), [x.id for x in jobList_fromset]))
 
@@ -1002,8 +1013,9 @@ class JobRegistry_Monitor(GangaThread):
             lock.release()
             log.debug("[Update Thread %s] Lock released for %s." % (currentThread, getName(backendObj)))
             self._runningNow = False
+            updateDict_ts.clearEntry(getName(backendObj))
 
-        log.debug("Finishing _checkBackend")
+            log.debug("Finishing _checkBackend")
         return
 
     def _checkActiveBackends(self, activeBackendsFunc):
