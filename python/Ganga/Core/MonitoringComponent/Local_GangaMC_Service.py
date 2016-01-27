@@ -221,19 +221,20 @@ class UpdateDict(object):
     def __init__(self):
         self.table = {}
 
-    def _runEntry(self, backendObj, backendCheckingFunction, jobList, timeoutMax=None):
+    def _runEntry(self, backendObj, backendCheckingFunction, jobList, jSet, timeoutMax=None):
         try:
+            backend_name = getName(backendObj)
             jSetSize = len(jSet)
             log.debug("Lock acquire successful. Updating jSet %s with %s." % ([stripProxy(x).getFQID('.') for x in jSet], [stripProxy(x).getFQID('.') for x in jobList]))
             jSet.update(jobList)
             # If jSet is empty it was cleared by an update action
             # i.e. the queue does not contain an update action for the
-            # particular backend any more.
+            # particular backend_name any more.
             if jSetSize:  # jSet not cleared
-                log.debug("%s backend job set exists. Added %s to it." % (backend, [stripProxy(x).getFQID('.') for x in jobList]))
+                log.debug("%s backend job set exists. Added %s to it." % (backend_name, [stripProxy(x).getFQID('.') for x in jobList]))
             else:
-                Qin.put(JobAction(backendCheckingFunction, self.table[backend].updateActionTuple()))
-                log.debug("Added new %s backend update action for jobs %s." % (backend, [stripProxy(x).getFQID('.') for x in self.table[backend].updateActionTuple()[1]]))
+                Qin.put(JobAction(backendCheckingFunction, self.table[backend_name].updateActionTuple()))
+                log.debug("Added new %s backend update action for jobs %s." % (backend_name, [stripProxy(x).getFQID('.') for x in self.table[backend_name].updateActionTuple()[1]]))
         except Exception as err:
             log.error("addEntry error: %s" % str(err))
 
@@ -244,47 +245,47 @@ class UpdateDict(object):
             timeoutMax = config['default_backend_poll_rate']
         #log.debug("*----addEntry()")
 
-        backend = getName(backendObj)
-        if backend in self.table:
-            backendObj, jSet, lock = self.table[backend].updateActionTuple()
+        backend_name = getName(backendObj)
+        if backend_name in self.table:
+            backendObj, jSet, lock = self.table[backend_name].updateActionTuple()
         else:  # New backend.
-            self.table[backend] = _DictEntry(backendObj, set(jobList), threading.RLock(), timeoutMax)
+            self.table[backend_name] = _DictEntry(backendObj, set(jobList), threading.RLock(), timeoutMax)
             # queue to get processed
-            Qin.put(JobAction(backendCheckingFunction, self.table[backend].updateActionTuple()))
-            log.debug("**Adding %s to new %s backend entry." % ([stripProxy(x).getFQID('.') for x in jobList], backend))
+            Qin.put(JobAction(backendCheckingFunction, self.table[backend_name].updateActionTuple()))
+            log.debug("**Adding %s to new %s backend entry." % ([stripProxy(x).getFQID('.') for x in jobList], backend_name))
             return True
 
-        # backend is in Qin waiting to be processed. Increase it's list of jobs
+        # backend_name is in Qin waiting to be processed. Increase it's list of jobs
         # by updating the table entry accordingly. This will reduce the
         # number of update requests.
         # i.e. It's like getting a friend in the queue to pay for your
         # purchases as well! ;p
-        log.debug("*: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend, lock._RLock__count, lock._is_owned(), [x.id for x in jobList], Qin.qsize()))
+        log.debug("*: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend_name, lock._RLock__count, lock._is_owned(), [x.id for x in jobList], Qin.qsize()))
         try:
             if lock.acquire(False):
 
                 try:
-                    self._runEntry()
+                    self._runEntry(backendObj, backendCheckingFunction, jobList, jSet, timeoutMax)
                 except Exception as err:
-                    logger.warining("ERROR RUNNING ENTRY: %s" % str(err))
+                    log.warning("ERROR RUNNING ENTRY: %s" % str(err))
 
-                log.debug("**: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
+                log.debug("**: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend_name, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
                 return True
         finally:
             lock.release()
         
 
-    def clearEntry(self, backend):
-        if backend in self.table:
-            entry = self.table[backend]
+    def clearEntry(self, backend_name):
+        if backend_name in self.table:
+            entry = self.table[backend_name]
         else:
-            log.error("Error clearing the %s backend. It does not exist!" % backend)
+            log.error("Error clearing the %s backend. It does not exist!" % backend_name)
 
         entry.jobSet = set()
         entry.timeoutCounter = entry.timeoutCounterMax
 
     def timeoutCheck(self):
-        for backend, entry in self.table.items():
+        for backend_name, entry in self.table.items():
             # timeoutCounter is reset to its max value ONLY by a successful update action.
             #
             # Initial value and subsequent resets by timeoutCheck() will set the timeoutCounter
@@ -293,27 +294,27 @@ class UpdateDict(object):
             diff = (entry.timeoutCounter - entry.timeoutCounterMax)
             if diff*diff<0.01 and entry.entryLock.acquire(False):
                 with release_when_done(entry.entryLock):
-                    log.debug("%s has been reset. Acquired lock to begin countdown." % backend)
+                    log.debug("%s has been reset. Acquired lock to begin countdown." % backend_name)
                     entry.timeLastUpdate = time.time()
 
                     # decrease timeout counter
                     if entry.timeoutCounter <= 0.0:
                         entry.timeoutCounter = entry.timeoutCounterMax - 0.01
                         entry.timeLastUpdate = time.time()
-                        log.debug("%s backend counter timeout. Resetting to %s." % (backend, entry.timeoutCounter))
+                        log.debug("%s backend counter timeout. Resetting to %s." % (backend_name, entry.timeoutCounter))
                     else:
                         _l = time.time()
                         entry.timeoutCounter -= _l - entry.timeLastUpdate
                         entry.timeLastUpdate = _l
 
-    def isBackendLocked(self, backend):
-        if backend in self.table:
-            return bool(self.table[backend].entryLock._RLock__count)
+    def isBackendLocked(self, backend_name):
+        if backend_name in self.table:
+            return bool(self.table[backend_name].entryLock._RLock__count)
         else:
             return False
 
     def releaseLocks(self):
-        for backend, entry in self.table.items():
+        for backend_name in self.table.keys():
             if entry.entryLock._is_owned():
                 entry.entryLock.release()
 
