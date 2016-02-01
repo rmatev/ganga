@@ -548,7 +548,10 @@ class JobRegistry_Monitor(GangaThread):
             log.debug("(time.time() - cbHookEntry._lastRun): %s" % str((time.time() - cbHookEntry._lastRun)))
             log.debug("cbHookEntry.timeout: %s" % str(cbHookEntry.timeout))
 
-            if cbHookEntry.enabled and (time.time() - cbHookEntry._lastRun) >= cbHookEntry.timeout:
+            diff = time.time() - cbHookEntry._lastRun
+
+            if cbHookEntry.enabled and (diff) >= cbHookEntry.timeout:
+                log.debug("%s >= %s" % (diff,  cbHookEntry.timeout))
                 log.debug("Running monitoring callback hook function %s(**%s)" %(cbHookFunc, cbHookEntry.argDict))
                 #self.callbackHookDict[cbHookFunc][0](**cbHookEntry.argDict)
                 try:
@@ -557,6 +560,8 @@ class JobRegistry_Monitor(GangaThread):
                     log.debug("Caught Unknown Callback Exception")
                     log.debug("Callback %s" % str(err))
                 cbHookEntry._lastRun = time.time()
+
+            log.debug("time since %s last called: %ss" % (cbHookFunc, str(time.time() - cbHookEntry._lastRun)))
 
         log.debug("\n\nRunning runClientCallbacks")
         self.runClientCallbacks()
