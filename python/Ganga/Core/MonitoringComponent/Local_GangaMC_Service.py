@@ -2,7 +2,6 @@ import Queue
 import threading
 import time
 import copy
-from contextlib import contextmanager
 
 from Ganga.Core.GangaThread import GangaThread
 from Ganga.Core.GangaRepository import RegistryKeyError, RegistryLockError
@@ -22,94 +21,28 @@ from Ganga.Utility.logging import getLogger, log_unknown_exception
 from Ganga.Core import BackendError
 from Ganga.Utility.Config import getConfig
 
+from Ganga.Core.MonitoringComponent.GangaMC_WorkerThread import MonitoringWorkerThread
+from Ganga.Core.MonitoringComponent.UpdateDict import UpdateDict, JobAction
+from Ganga.Core.MonitoringComponent.GangaMC_Functions import _handleError, _checkBackend, makeCredChecker
+
 log = getLogger()
 
 config = getConfig("PollThread")
 THREAD_POOL_SIZE = config['update_thread_pool_size']
 Qin = Queue.Queue()
 ThreadPool = []
-# number of threads waiting for actions in Qin
-tpFreeThreads = 0
-
-# The JobAction class encapsulates a function, its arguments and its post result action
-# based on what is defined as a successful run of the function.
-
-class JobAction(object):
-
-    def __init__(self, function, args=(), kwargs={},
-                 success=(True, ),
-                 callback_Success=lambda: None,
-                 callback_Failure=lambda: None):
-        self.function = function
-        self.args = args
-
-        self.kwargs = kwargs
-        self.success = success
-        self.callback_Success = callback_Success
-        self.callback_Failure = callback_Failure
-        self.thread = None
-        self.description = ''
-
-
-class MonitoringWorkerThread(GangaThread):
-
-    def __init__(self, name):
-        GangaThread.__init__(self, name)
-
-    def run(self):
-        self._execUpdateAction()
-
-    # This function takes a JobAction object from the Qin queue,
-    # executes the embedded function and runs post result actions.
-    def _execUpdateAction(self):
-        global tpFreeThreads
-        # DEBUGGING THREADS
-        # import sys
-        # sys.settrace(_trace)
-        while not self.should_stop():
-            log.debug("%s waiting..." % threading.currentThread())
-            #setattr(threading.currentThread(), 'action', None)
-            tpFreeThreads += 1
-
-            while not self.should_stop():
-                try:
-                    action = Qin.get(block=True, timeout=0.5)
-                    break
-                except Queue.Empty:
-                    #pass
-                    continue
-
-            if self.should_stop():
-                break
-
-            tpFreeThreads -= 1
-            #setattr(threading.currentThread(), 'action', action)
-            log.debug("Qin's size is currently: %d" % Qin.qsize())
-            log.debug("%s running..." % threading.currentThread())
-
-            if not isType(action, JobAction):
-                continue
-            if action.function == 'stop':
-                break
-            try:
-                result = action.function(*action.args, **action.kwargs)
-            except Exception as err:
-                log.debug("_execUpdateAction: %s" % str(err))
-                action.callback_Failure()
-            else:
-                if result in action.success:
-                    action.callback_Success()
-                else:
-                    action.callback_Failure()
-
-# Create the thread pool
-
 
 def _makeThreadPool(threadPoolSize=THREAD_POOL_SIZE, daemonic=True):
     for i in range(THREAD_POOL_SIZE):
         t = MonitoringWorkerThread(name="MonitoringWorker_%s" % i)
         ThreadPool.append(t)
         t.start()
+
+if config['autostart_monThreads']:
+    _makeThreadPool()
+
+updateDict_ts = SynchronisedObject(UpdateDict())
+
 
 
 def stop_and_free_thread_pool(fail_cb=None, max_retries=5):
@@ -163,244 +96,10 @@ def _purge_actions_queue():
             # fail to terminate
             if isType(action, JobAction) and action.function == 'stop':
                 Qin.put(action)
-        except Queue.Empty:
-            break
-
-if config['autostart_monThreads']:
-    _makeThreadPool()
-
-
-# Each entry for the updateDict_ts object (based on the UpdateDict class)
-# is a _DictEntry object.
-class _DictEntry(object):
-
-    def __init__(self, backendObj, jobSet, entryLock, timeoutCounterMax):
-        self.backendObj = backendObj
-        self.jobSet = jobSet
-        self.entryLock = entryLock
-        self.timeoutCounterMax = timeoutCounterMax
-        self.timeoutCounter = timeoutCounterMax - 0.01
-        self.timeLastUpdate = 0.0
-
-    def updateActionTuple(self):
-        return self.backendObj, self.jobSet, self.entryLock
-
-
-@contextmanager
-def release_when_done(rlock):
-    """
-    A ``threading.Lock`` (or ``RLock`` etc.) object cannot be used in a context
-    manager if the lock acquisition is non-blocking because the acquisition can
-    fail and so the contents of the ``with`` block should not be run.
-
-    To allow sensible ``release()`` behaviour in these cases, acquire the lock
-    as usual with ``lock.acquire(False)`` and then wrap the required code with
-    this context manager::
-
-        if lock.acquire(blocking=False):
-            with release_when_done(lock):
-                #some code
-                pass
-
-    Attributes:
-        rlock: A lock object which can have ``release()`` called on it,
-    """
-    try:
-        yield rlock
-    finally:
-        rlock.release()
-
-
-class UpdateDict(object):
-
-    """
-    This serves as the Update Table. Is is meant to be used 
-    by wrapping it as a SynchronisedObject so as to ensure thread safety.
-    """
-
-    def __init__(self):
-        self.table = {}
-
-    def _runEntry(self, backendObj, backendCheckingFunction, jobList, jSet, timeoutMax=None):
-        try:
-            backend_name = getName(backendObj)
-            jSetSize = len(jSet)
-            log.debug("Lock acquire successful. Updating jSet %s with %s." % ([stripProxy(x).getFQID('.') for x in jSet], [stripProxy(x).getFQID('.') for x in jobList]))
-            jSet.update(jobList)
-            # If jSet is empty it was cleared by an update action
-            # i.e. the queue does not contain an update action for the
-            # particular backend_name any more.
-            if jSetSize:  # jSet not cleared
-                log.debug("%s backend job set exists. Added %s to it." % (backend_name, [stripProxy(x).getFQID('.') for x in jobList]))
-            else:
-                Qin.put(JobAction(backendCheckingFunction, self.table[backend_name].updateActionTuple()))
-                log.debug("Added new %s backend update action for jobs %s." % (backend_name, [stripProxy(x).getFQID('.') for x in self.table[backend_name].updateActionTuple()[1]]))
-        except Exception as err:
-            log.error("addEntry error: %s" % str(err))
-
-    def addEntry(self, backendObj, backendCheckingFunction, jobList, timeoutMax=None):
-        if not jobList:
-            return
-        if timeoutMax is None:
-            timeoutMax = config['default_backend_poll_rate']
-        #log.debug("*----addEntry()")
-
-        backend_name = getName(backendObj)
-        if backend_name in self.table:
-            backendObj, jSet, lock = self.table[backend_name].updateActionTuple()
-        else:  # New backend.
-            self.table[backend_name] = _DictEntry(backendObj, set(jobList), threading.RLock(), timeoutMax)
-            # queue to get processed
-            Qin.put(JobAction(backendCheckingFunction, self.table[backend_name].updateActionTuple()))
-            log.debug("**Adding %s to new %s backend entry." % ([stripProxy(x).getFQID('.') for x in jobList], backend_name))
-            return True
-
-        # backend_name is in Qin waiting to be processed. Increase it's list of jobs
-        # by updating the table entry accordingly. This will reduce the
-        # number of update requests.
-        # i.e. It's like getting a friend in the queue to pay for your
-        # purchases as well! ;p
-        log.debug("*: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend_name, lock._RLock__count, lock._is_owned(), [x.id for x in jobList], Qin.qsize()))
-        try:
-            if lock.acquire(False):
-
-                try:
-                    self._runEntry(backendObj, backendCheckingFunction, jobList, jSet, timeoutMax)
-                except Exception as err:
-                    log.warning("ERROR RUNNING ENTRY: %s" % str(err))
-
-                log.debug("**: backend=%s, isLocked=%s, isOwner=%s, joblist=%s, queue=%s" % (backend_name, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
-                return True
+        #except Queue.Empty:
+        #    break
         finally:
-            lock.release()
-        
-
-    def clearEntry(self, backend_name):
-        if backend_name in self.table:
-            entry = self.table[backend_name]
-        else:
-            log.error("Error clearing the %s backend. It does not exist!" % backend_name)
-
-        entry.jobSet = set()
-        entry.timeoutCounter = entry.timeoutCounterMax
-
-    def timeoutCheck(self):
-        for backend_name, entry in self.table.items():
-            # timeoutCounter is reset to its max value ONLY by a successful update action.
-            #
-            # Initial value and subsequent resets by timeoutCheck() will set the timeoutCounter
-            # to a value just short of the max value to ensure that it the timeoutCounter is
-            # not decremented simply because there are no updates occuring.
-            diff = (entry.timeoutCounter - entry.timeoutCounterMax)
-            if diff*diff<0.01 and entry.entryLock.acquire(False):
-                with release_when_done(entry.entryLock):
-                    log.debug("%s has been reset. Acquired lock to begin countdown." % backend_name)
-                    entry.timeLastUpdate = time.time()
-
-                    # decrease timeout counter
-                    if entry.timeoutCounter <= 0.0:
-                        entry.timeoutCounter = entry.timeoutCounterMax - 0.01
-                        entry.timeLastUpdate = time.time()
-                        log.debug("%s backend counter timeout. Resetting to %s." % (backend_name, entry.timeoutCounter))
-                    else:
-                        _l = time.time()
-                        entry.timeoutCounter -= _l - entry.timeLastUpdate
-                        entry.timeLastUpdate = _l
-
-    def isBackendLocked(self, backend_name):
-        if backend_name in self.table:
-            return bool(self.table[backend_name].entryLock._RLock__count)
-        else:
-            return False
-
-    def releaseLocks(self):
-        for backend_name in self.table.keys():
-            if entry.entryLock._is_owned():
-                entry.entryLock.release()
-
-updateDict_ts = SynchronisedObject(UpdateDict())
-
-
-class CallbackHookEntry(object):
-
-    def __init__(self, argDict, enabled=True, timeout=0):
-        self.argDict = argDict
-        self.enabled = enabled
-        # the frequency in seconds
-        self.timeout = timeout
-        # record the time when this hook has been run
-        self._lastRun = 0
-
-def resubmit_if_required(jobList_fromset):
-
-    # resubmit if required
-    for j in jobList_fromset:
-
-        if not j.do_auto_resubmit:
-            continue
-
-        if len(j.subjobs) == 0:
-            try_resubmit = j.info.submit_counter <= config['MaxNumResubmits']
-        else:
-            # Check for max number of resubmissions
-            skip = False
-            for s in j.subjobs:
-                if s.info.submit_counter > config['MaxNumResubmits'] or s.status == "killed":
-                    skip = True
-
-                if skip:
-                    continue
-
-                num_com = len([s for s in j.subjobs if s.status in ['completed']])
-                num_fail = len([s for s in j.subjobs if s.status in ['failed']])
-
-                #log.critical('Checking failed subjobs for job %d... %d %s',j.id,num_com,num_fail)
-
-                try_resubmit = num_fail > 0 and (float(num_fail) / float(num_com + num_fail)) < config['MaxFracForResubmit']
-
-            if try_resubmit:
-                if j.backend.check_auto_resubmit():
-                    log.warning('Auto-resubmit job %d...' % j.id)
-                    j.auto_resubmit()
-
-    return
-
-
-def get_jobs_in_bunches(jobList_fromset, blocks_of_size=5, stripProxies=True):
-    """
-    Return a list of lists of subjobs where each list contains
-    a total number of jobs close to 'blocks_of_size' as possible
-    whilst not splitting jobs containing subjobs
-    Also strip the jobs of their proxies...
-    """
-    list_of_bunches = []
-    temp_list = []
-
-    for this_job in jobList_fromset:
-
-        if stripProxies:
-            temp_list.append(stripProxy(this_job))
-        else:
-            temp_list.append(this_job)
-
-        count = 0
-        for found_job in temp_list:
-            sj_len = len(found_job.subjobs)
-            if sj_len > 0:
-                count += sj_len
-            else:
-                count += 1
-
-        if count >= blocks_of_size:
-            list_of_bunches.append(temp_list)
-            temp_list = []
-
-    if len(temp_list) != 0:
-        list_of_bunches.append(temp_list)
-        temp_list = []
-
-    return list_of_bunches
-
+            pass
 
 class JobRegistry_Monitor(GangaThread):
 
@@ -420,12 +119,31 @@ class JobRegistry_Monitor(GangaThread):
         self.clientCallbackDict = {}
         self.alive = True
         self.enabled = False
+
         # run the monitoring loop continuosly (steps=-1) or just a specified
         # number of steps(>0)
         self.steps = -1
         self.activeBackends = {}
         self.updateJobStatus = None
         self.errors = {}
+
+        self.__setupJobActions()
+
+        # synch objects
+        # main loop mutex
+        self.__mainLoopCond = threading.Condition()
+        # cleanup synch
+        self.__cleanUpEvent = threading.Event()
+        # asynch mon loop running synch
+        self.__monStepsTerminatedEvent = threading.Event()
+        # event to signal the break of job lists iterators
+        self.stopIter = threading.Event()
+        self.stopIter.set()
+        self._runningNow = False
+
+
+    def __setupJobActions(self):
+
         # Create the default backend update method and add to callback hook.
         self.makeUpdateJobStatusFunction()
 
@@ -438,24 +156,18 @@ class JobRegistry_Monitor(GangaThread):
         log.debug("Setting callback hook for disk space checking")
         self.setCallbackHook(self.diskSpaceCheckJobInsertor, {}, True, timeout=config['diskspace_poll_rate'])
 
-        # synch objects
-        # main loop mutex
-        self.__mainLoopCond = threading.Condition()
-        # cleanup synch
-        self.__cleanUpEvent = threading.Event()
-        # asynch mon loop running synch
-        self.__monStepsTerminatedEvent = threading.Event()
-        # event to signal the break of job lists iterators
-        self.stopIter = threading.Event()
-        self.stopIter.set()
 
-        self._runningNow = False
+
+
 
     def isEnabled( self, useRunning = True ):
         if useRunning:
             return self.enabled or self.__isInProgress()
         else:
             return self.enabled
+
+    def shouldExit(self):
+        return self.enabled is False and self.alive is False
 
     def run(self):
         """
@@ -480,48 +192,53 @@ class JobRegistry_Monitor(GangaThread):
                     self.__cleanUp()
                     if not self.alive:  # stopped?
                         return
-                    # disabled,but still alive, so we keep waiting
-                    # for i in range( int(self.uPollRate*20) ):
-                    #    if not self.alive:
-                    #        return
-                    #    self.__mainLoopCond.wait( self.uPollRate*0.05 )
+                    ## same as threading.Condition().wait()
                     self.__mainLoopCond.wait()
 
+
+		## WHOLE POINT OF THE WHILE TRUE LOOP!!!
                 log.debug("Launching Monitoring Step")
                 self.__monStep()
 
-                # delay here the monitoring steps according to the
-                # configuration
-                while self.__sleepCounter > 0.0:
-                    log.debug("Wait Condition")
-                    self.progressCallback(self.__sleepCounter)
-                    for i in range(int(self.uPollRate * 20)):
-                        if self.enabled:
-                            self.__mainLoopCond.wait(self.uPollRate * 0.05)
-                        else:
-                            if not self.alive:  # stopped?
-                                self.__cleanUp()
-                            # disabled, break to the outer while
-                            break
-                    self.__sleepCounter -= self.uPollRate
-                    if not self.enabled:
-                        break
+		self.__sleep_and_check()
 
-                else:
-                    log.debug("Run on Demand")
-                    # run on demand?
-                    if self.steps > 0:
-                        # decrement the remaining number of steps to run
-                        self.steps -= 1
-                        # requested number of steps executed, disabling...
-                        if self.steps <= 0:
-                            self.enabled = False
-                            # notify the blocking call of runMonitoring()
-                            self.__monStepsTerminatedEvent.set()
 
         log.debug("Monitoring Cleanup")
         # final cleanup
         self.__cleanUp()
+
+	
+    def __sleep_and_check(self):
+
+       # delay here the monitoring steps according to the
+       # configuration
+       while self.__sleepCounter > 0.0:
+           log.debug("Wait Condition")
+           self.progressCallback(self.__sleepCounter)
+           for i in range(int(self.uPollRate * 20)):
+               if self.enabled:
+                   self.__mainLoopCond.wait(self.uPollRate * 0.05)
+               else:
+                   if not self.alive:  # stopped?
+                       self.__cleanUp()
+                   # disabled, break to the outer while
+                   break
+           self.__sleepCounter -= self.uPollRate
+           if not self.enabled:
+               break
+
+       else:
+           log.debug("Run on Demand")
+           # run on demand?
+           if self.steps > 0:
+                # decrement the remaining number of steps to run
+                self.steps -= 1
+                # requested number of steps executed, disabling...
+                if self.steps <= 0:
+                    self.enabled = False
+                    # notify the blocking call of runMonitoring()
+                    self.__monStepsTerminatedEvent.set()
+
 
     def __monStep(self):
         """
@@ -556,9 +273,11 @@ class JobRegistry_Monitor(GangaThread):
                 #self.callbackHookDict[cbHookFunc][0](**cbHookEntry.argDict)
                 try:
                     self.callbackHookDict[cbHookFunc][0](**cbHookEntry.argDict)
-                except Exception as err:
-                    log.debug("Caught Unknown Callback Exception")
-                    log.debug("Callback %s" % str(err))
+                #except Exception as err:
+                #    log.debug("Caught Unknown Callback Exception")
+                #    log.debug("Callback %s" % str(err))
+                finally:
+                    pass
                 cbHookEntry._lastRun = time.time()
 
             log.debug("time since %s last called: %ss" % (cbHookFunc, str(time.time() - cbHookEntry._lastRun)))
@@ -611,9 +330,10 @@ class JobRegistry_Monitor(GangaThread):
             if _missingCreds:
                 log.error("Cannot run the monitoring loop. The following credentials are required: %s" % _missingCreds)
                 return False
+	
+	self._actuallyRunMon(jobs, steps, timeout, _loadCredentials)
 
-        #log.debug("jobs: %s" % str(jobs))
-        #log.debug("self.__mainLoopCond: %s" % str(self.__mainLoopCond))
+    def _actuallyRunMon(self, jobs, steps, timeout, _loadCredentials):
 
         with self.__mainLoopCond:
             log.debug('Monitoring loop lock acquired. Enabling mon loop')
@@ -687,29 +407,21 @@ class JobRegistry_Monitor(GangaThread):
 
         return True
 
-    def disableMonitoring(self, fail_cb=None, max_retries=5):
+    def disableMonitoring(self, fail_cb=None, max_retries=5, stopping=False):
         """
         Disable the monitoring loop
         """
 
-        if not self.alive:
+        if not self.alive and not stopping:
             log.error("Cannot disable monitoring loop. It has already been stopped")
             return False
 
         was_enabled = self.enabled
 
-        try:
-            if self.enabled:
-                log.debug("Disabling Monitoring Service")
+        if self.enabled:
+            log.debug("Disabling Monitoring Service")
 
-                # THIS NEEDS TO BE HERE FOR A CLEAN DISABLE OF THE MONITORING L
-                self.enabled = False
-                # CANNOT DETERMINE IF WE SHOULD CONTINUE WITH EXPENSIVE OUT OF
-        except Exception as err:
-            log.error("ERROR STOPPING MONITORING THREAD, feel free to force exit")
-            # This except is left in incase we decide to add things here which
-            # can fail!
-            log.error("Err %s" % str(err))
+            self.enabled = False
 
         with self.__mainLoopCond:
             log.debug('Monitoring loop lock acquired. Disabling mon loop')
@@ -721,15 +433,9 @@ class JobRegistry_Monitor(GangaThread):
             # wake up the monitoring loop
             self.__mainLoopCond.notifyAll()
 
-        if was_enabled is True and self._runningNow:
+        if not stopping and was_enabled is True and self._runningNow:
             log.info("Some tasks are still running on Monitoring Loop")
             log.info("Please wait for them to finish to avoid data corruption")
-
-        #while self._runningNow is True:
-        #    time.sleep(0.5)
-
-        #if was_enabled:
-        #    log.info("Monitoring Loop has stopped")
 
         stop_and_free_thread_pool(fail_cb, max_retries)
 
@@ -742,6 +448,8 @@ class JobRegistry_Monitor(GangaThread):
          fail_cb : if not None, this callback is called if a retry attempt is needed
         """
 
+        self.disableMonitoring(fail_cb, max_retries, stopping=True)
+
         if not self.alive:
             log.warning("Monitoring loop has already been stopped")
             return False
@@ -749,17 +457,6 @@ class JobRegistry_Monitor(GangaThread):
             self.alive = False
 
         self.__mainLoopCond.acquire()
-        if self.enabled:
-            log.info('Stopping the monitoring component...')
-            self.alive = False
-            self.enabled = False
-
-        try:
-            # signal the main thread to finish
-            self.steps = 0
-            self.stopIter.set()
-        except Exception as err:
-            log.error("stopIter error: %s" % str(err))
         try:
             # wake up the monitoring loop
             self.__mainLoopCond.notifyAll()
@@ -771,15 +468,8 @@ class JobRegistry_Monitor(GangaThread):
         self.__cleanUpEvent.wait()
         self.__cleanUpEvent.clear()
 
-        # ---->
-        # wait for all worker threads to finish
-        #self.__awaitTermination()
-        # join the worker threads
         stop_and_free_thread_pool(fail_cb, max_retries)
         ###log.info( 'Monitoring component stopped successfully!' )
-
-        #while self._runningNow is True:
-        #    time.sleep(0.5)
 
         return True
 
@@ -801,7 +491,7 @@ class JobRegistry_Monitor(GangaThread):
         self.__cleanUpEvent.set()
 
     def __isInProgress(self):
-        return self.steps > 0 or Qin.qsize() > 0 or tpFreeThreads < len(ThreadPool)
+        return self.steps > 0 or Qin.qsize() > 0
 
     def __awaitTermination(self, timeout=5):
         """
@@ -817,6 +507,15 @@ class JobRegistry_Monitor(GangaThread):
         return True
 
     def setCallbackHook(self, func, argDict, enabled, timeout=0):
+        class CallbackHookEntry(object):
+
+            def __init__(self, argDict, enabled=True, timeout=0):
+                self.argDict = argDict
+                self.enabled = enabled
+                # the frequency in seconds
+                self.timeout = timeout
+                # record the time when this hook has been run
+                self._lastRun = 0
         func_name = getName(func)
         log.debug('Setting Callback hook function %s.' % func_name)
         log.debug('arg dict: %s' % str(argDict))
@@ -887,12 +586,14 @@ class JobRegistry_Monitor(GangaThread):
                     if self.enabled is True and self.alive is True:
                         active_backends.setdefault(backend_name, [])
                         active_backends[backend_name].append(j)
-            except RegistryKeyError as err:
-                log.debug("RegistryKeyError: The job was most likely removed")
-                log.debug("RegError %s" % str(err))
-            except RegistryLockError as err:
-                log.debug("RegistryLockError: The job was most likely removed")
-                log.debug("Reg LockError%s" % str(err))
+            #except RegistryKeyError as err:
+            #    log.debug("RegistryKeyError: The job was most likely removed")
+            #    log.debug("RegError %s" % str(err))
+            #except RegistryLockError as err:
+            #    log.debug("RegistryLockError: The job was most likely removed")
+            #    log.debug("Reg LockError%s" % str(err))
+            finally:
+                pass
 
         summary = '{'
         for backend, these_jobs in active_backends.iteritems():
@@ -904,125 +605,6 @@ class JobRegistry_Monitor(GangaThread):
         summary += '}'
         log.debug("Returning active_backends: %s" % summary)
         return active_backends
-
-    # This function will be run by update threads
-    def _checkBackend(self, backendObj, jobListSet, lock):
-
-        log.debug("\n\n_checkBackend\n\n")
-
-        currentThread = threading.currentThread()
-        # timeout mechanism may have acquired the lock to impose delay.
-        lock.acquire()
-        self._runningNow = True
-
-        updateDict_ts.clearEntry(getName(backendObj))
-
-        try:
-            log.debug("[Update Thread %s] Lock acquired for %s" % (currentThread, getName(backendObj)))
-            #alljobList_fromset = IList(filter(lambda x: x.status in ['submitted', 'running'], jobListSet), self.stopIter)
-            # print alljobList_fromset
-            #masterJobList_fromset = IList(filter(lambda x: (x.master is not None) and (x.status in ['submitting']), jobListSet), self.stopIter)
-
-            #FIXME We've lost IList and the above method for adding a job which is in a submitted state looks like one that didn't work
-            # Come back and fix this once 6.1.3 is out. We can drop features for functionalist here as the lazy loading is fixed in this release
-            # rcurrie
-            alljobList_fromset = list(filter(lambda x: x.status in ['submitting', 'submitted', 'running'], jobListSet))
-            masterJobList_fromset = list()
-
-            # print masterJobList_fromset
-            jobList_fromset = alljobList_fromset
-            jobList_fromset.extend(masterJobList_fromset)
-            # print jobList_fromset
-            try:
-                log.debug("[Update Thread %s] Updating %s with %s." % (currentThread, getName(backendObj), [x.id for x in jobList_fromset]))
-
-                tested_backends = []
-
-                for j in jobList_fromset:
-
-                    run_setup = False
-
-                    if backendObj is not None:
-                        if hasattr(backendObj, 'setup'):
-                            stripProxy(j.backend).setup()
-                    else:
-                        if hasattr(j.backend, 'setup'):
-                            stripProxy(j.backend).setup()
-
-                if self.enabled is False and self.alive is False:
-                    log.debug("NOT enabled, leaving")
-                    return
-
-                block_size = config['numParallelJobs']
-                all_job_bunches = get_jobs_in_bunches(jobList_fromset, blocks_of_size = block_size )
-
-                bunch_size = 0
-                for bunch in all_job_bunches:
-                    bunch_size += len(bunch)
-                assert(bunch_size == len(jobList_fromset))
-
-                all_exceptions = []
-
-                for this_job_list in all_job_bunches:
-
-                    if self.enabled is False and self.alive is False:
-                        log.debug("NOT enabled, breaking loop")
-                        break
-
-                    ### This tries to loop over ALL jobs in 'this_job_list' with the maximum amount of redundancy to keep
-                    ### going and attempting to update all (sub)jobs if some fail
-                    ### ALL ERRORS AND EXCEPTIONS ARE REPORTED VIA log.error SO NO INFORMATION IS LOST/IGNORED HERE!
-                    job_ids = ''
-                    for this_job in this_job_list:
-                        job_ids += ' %s' % str(this_job.id) 
-                    log.debug("Updating Jobs: %s" % job_ids)
-                    try:
-                        stripProxy(backendObj).master_updateMonitoringInformation(this_job_list)
-                    except Exception as err:
-                        #raise err
-                        log.debug("Err: %s" % str(err))
-                        ## We want to catch ALL of the exceptions
-                        ## This would allow us to continue in the case of errors due to bad job/backend combinations
-                        if err not in all_exceptions:
-                            all_exceptions.append(err)
-
-                if all_exceptions != []:
-                    for err in all_exceptions:
-                        log.error("Monitoring Error: %s" % str(err))
-                    ## We should be raising exceptions no matter what
-                    raise all_exceptions[0]
-
-                resubmit_if_required(jobList_fromset)
-
-            except BackendError as x:
-                self._handleError(x, x.backend_name, 0)
-            except Exception as err:
-                #self._handleError(err, getName(backendObj), 1)
-                log.error("Monitoring Error: %s" % str(err))
-                log.debug("Lets not crash here!")
-                return
-
-            # FIXME THIS METHOD DOES NOT EXIST
-            #log.debug("[Update Thread %s] Flushing registry %s." % (currentThread, [x.id for x in jobList_fromset]))
-            # FIXME THIS RETURNS A REGISTRYSLICE OBJECT NOT A REGISTRY, IS THIS CORRECT? SHOULD WE FLUSH
-            # COMMENTING OUT AS IT SIMPLY WILL NOT RUN/RESOLVE!
-            # this concerns me - rcurrie
-            #self.registry._flush(jobList_fromset)  # Optimisation required!
-
-            #for this_job in jobList_fromset:
-            #    stripped_job = stripProxy(this_job)
-            #    stripped_job._getRegistry()._flush([stripped_job])
-
-        except Exception as err:
-            log.debug("Monitoring Loop Error: %s" % str(err))
-        finally:
-            lock.release()
-            log.debug("[Update Thread %s] Lock released for %s." % (currentThread, getName(backendObj)))
-            self._runningNow = False
-            updateDict_ts.clearEntry(getName(backendObj))
-
-            log.debug("Finishing _checkBackend")
-        return
 
     def _checkActiveBackends(self, activeBackendsFunc):
 
@@ -1053,10 +635,39 @@ class JobRegistry_Monitor(GangaThread):
             #       of the particular backend is satisfied.
             #       This requires backends to hold relevant information on its
             #       credential requirements.
-            #log.debug("addEntry: %s, %s, %s, %s" % (str(backendObj), str(self._checkBackend), str(jList), str(pRate)))
-            updateDict_ts.addEntry(backendObj, self._checkBackend, jList, pRate)
+            global Qin
+            updateDict_ts.addEntry(backendObj, self.__checkBackend, jList, Qin, pRate)
             summary = str([stripProxy(x).getFQID('.') for x in jList])
             log.debug("jList: %s" % str(summary))
+
+    def __checkBackend(self, backendObj, jobListSet, lock):
+
+	global updateDict_ts
+        self._runningNow = True
+
+        currentThread = threading.currentThread()
+        # timeout mechanism may have acquired the lock to impose delay.
+        lock.acquire()
+
+        updateDict_ts.clearEntry(getName(backendObj))
+
+        log.debug("[Update Thread %s] Lock acquired for %s" % (currentThread, getName(backendObj)))
+
+        jobList_fromset = list(filter(lambda x: x.status in ['submitting', 'submitted', 'running'], jobListSet))
+        log.debug("[Update Thread %s] Updating %s with %s." % (currentThread, getName(backendObj), [x.id for x in jobList_fromset]))
+
+        try:
+            _checkBackend(self, backendObj, jobListSet)
+        #except Exception as err:
+        #    log.debug("Monitoring Loop Error: %s" % str(err))
+        finally:
+            lock.release()
+            self._runningNow = False
+            log.debug("[Update Thread %s] Lock released for %s." % (currentThread, getName(backendObj)))
+            updateDict_ts.clearEntry(getName(backendObj))
+
+            log.debug("Finishing _checkBackend")
+        return
 
 
     def makeUpdateJobStatusFunction(self, makeActiveBackendsFunc=None):
@@ -1078,30 +689,21 @@ class JobRegistry_Monitor(GangaThread):
 
             def cb_Failure():
                 self.enableCallbackHook(credCheckJobInsertor)
-                self._handleError('%s checking failed!' % getName(credObj), getName(credObj), False)
+                _handleError('%s checking failed!' % getName(credObj), getName(credObj), False)
 
             log.debug('Inserting %s checking function to Qin.' % getName(credObj))
-            _action = JobAction(function=self.makeCredChecker(credObj),
+            _action = JobAction(function=makeCredChecker(credObj),
                                 callback_Success=cb_Success,
                                 callback_Failure=cb_Failure)
             self.disableCallbackHook(credCheckJobInsertor)
             try:
                 Qin.put(_action)
-            except Exception as err:
-                log.debug("makeCred Err: %s" % str(err))
-                cb_Failure("Put _action failure: %s" % str(_action), "unknown", True )
+            #except Exception as err:
+            #    log.debug("makeCred Err: %s" % str(err))
+            #    cb_Failure("Put _action failure: %s" % str(_action), "unknown", True )
+            finally:
+                pass
         return credCheckJobInsertor
-
-    def makeCredChecker(self, credObj):
-        def credChecker():
-            log.debug("Checking %s." % getName(credObj))
-            try:
-                s = credObj.renew()
-            except Exception as msg:
-                return False
-            else:
-                return s
-        return credChecker
 
     def diskSpaceCheckJobInsertor(self):
         """
@@ -1112,8 +714,7 @@ class JobRegistry_Monitor(GangaThread):
 
         def cb_Failure():
             self.disableCallbackHook(self.diskSpaceCheckJobInsertor)
-            self._handleError(
-                'Available disk space checking failed and it has been disabled!', 'DiskSpaceChecker', False)
+            _handleError('Available disk space checking failed and it has been disabled!', 'DiskSpaceChecker', False)
 
         log.debug('Inserting disk space checking function to Qin.')
         _action = JobAction(function=Coordinator._diskSpaceChecker,
@@ -1122,69 +723,18 @@ class JobRegistry_Monitor(GangaThread):
         self.disableCallbackHook(self.diskSpaceCheckJobInsertor)
         try:
             Qin.put(_action)
-        except Exception as err:
-            log.debug("diskSp Err: %s" % str(err))
-            cb_Failure()
+        #except Exception as err:
+        #    log.debug("diskSp Err: %s" % str(err))
+        #    cb_Failure()
+        finally:
+            pass
 
     def updateJobs(self):
         if time.time() - self.__updateTimeStamp >= self.minPollRate:
             self.__sleepCounter = 0.0
         else:
             self.progressCallback("Processing... Please wait.")
-            log.debug(
-                "Updates too close together... skipping latest update request.")
+            log.debug("Updates too close together... skipping latest update request.")
             self.__sleepCounter = self.minPollRate
 
-    def _handleError(self, x, backend_name, show_traceback):
-        def log_error():
-            log.error('Problem in the monitoring loop: %s', str(x))
-            #if show_traceback:
-            #    log.error("exception: ", exc_info=1)
-            #    #log_unknown_exception()
-            #    import traceback
-            #    traceback.print_stack()
-            if show_traceback:
-                log_user_exception(log)
-        bn = backend_name
-        self.errors.setdefault(bn, 0)
-        if self.errors[bn] == 0:
-            log_error()
-            if not config['repeat_messages']:
-                log.info('Further error messages from %s handler in the monitoring loop will be skipped.' % bn)
-        else:
-            if config['repeat_messages']:
-                log_error()
-        self.errors[bn] += 1
-
-
-######## THREAD POOL DEBUGGING ###########
-def _trace(frame, event, arg):
-    setattr(threading.currentThread(), '_frame', frame)
-
-
-def getStackTrace():
-    import inspect
-
-    try:
-        status = "Available threads:\n"
-
-        for worker in ThreadPool:
-            status = status + "  " + worker.getName() + ":\n"
-
-            if hasattr(worker, '_frame'):
-                frame = worker._frame
-                if frame:
-                    status = status + "    stack:\n"
-                    for frame, filename, line, function_name, context, index in inspect.getouterframes(frame):
-                        status = status + "      " + function_name + " @ " + filename + " # " + str(line) + "\n"
-
-            status = status + "\n"
-        ## CANNOT CONVERT TO A STRING!!!
-        #log.info("Queue", str(Qin.queue))
-        log.debug("Trace: %s" % str(status))
-        return status
-    except Exception, err:
-        print("Err: %s" % str(err))
-    finally:
-        pass
 
