@@ -76,7 +76,7 @@ def _ganga_run_exitfuncs():
     ## Stop the Mon loop from iterating further!
     from Ganga.Core import monitoring_component
     if monitoring_component is not None:
-        from Ganga.Core.MonitoringComponent.Local_GangaMC_Service import getStackTrace
+        from Ganga.Core.MonitoringComponent.GangaMC_Functions import getStackTrace
         getStackTrace()
         monitoring_component.disableMonitoring()
         #monitoring_component.stop()
