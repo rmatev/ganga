@@ -467,7 +467,7 @@ class Item(object):
         if not isAllowedType:
             #import traceback
             #traceback.print_stack()
-            raise TypeMismatchError('Attribute "%s" expects a value of the following types: %s\nfound: "%s" of type: %s' % (name, validTypes, input_val, str(type(input_val))))
+            raise TypeMismatchError('Attribute "%s" expects a value of the following types: %s\nfound: "%s" of type: %s' % (name, validTypes, input_val, type(input_val)))
 
     def _check_type(self, val, name, enableGangaList=True):
 
