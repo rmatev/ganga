@@ -30,7 +30,7 @@ logger = Ganga.Utility.logging.getLogger(modulename=1)
 
 _imported_GangaList = None
 
-do_not_copy = ['_proxyObject', '_proxyClass', '_data', '_index_cache', '_parent', '_registry', '_impl']
+do_not_copy = ['_proxyObject', '_data', '_index_cache', '_parent', '_registry']
 
 def _getGangaList():
     global _imported_GangaList
@@ -41,27 +41,14 @@ def _getGangaList():
 
 
 class Node(object):
-    _ref_list = ['_parent', '_registry', '_index_cache', '_proxyObject']
+    _ref_list = ['_parent', '_registry', '_index_cache']
 
     def __init__(self, parent=None):
         self._data = {}
         self._parent = parent
         self._index_cache = {}
-        self._proxyObject = None
         super(Node, self).__init__()
         #logger.info("Node __init__")
-
-    def __construct__(self, args):
-        ## Don't obliterate the data stored in the node here
-        ## Objects are initialized then '__construct__'-ed in the Proxy
-        if not hasattr(self, '_data'):
-            self._data = {}
-        if not hasattr(self, '_parent'):
-            self._setParent(None)
-        if not hasattr(self, '_proxyObject'):
-            self._proxyObject = None
-        if not hasattr(self, '_index_cache'):
-            self._index_cache = {}
 
     def __getstate__(self):
         d = self.__dict__
@@ -731,7 +718,6 @@ class GangaObject(Node):
     __metaclass__ = ObjectMetaclass
     _schema = None  # obligatory, specified in the derived classes
     _category = None  # obligatory, specified in the derived classes
-    _proxyClass = None  # created automatically
     _registry = None  # automatically set for Root objects
     _exportmethods = []  # optional, specified in the derived classes
 
@@ -758,7 +744,6 @@ class GangaObject(Node):
         # IMPORTANT: if you add instance attributes like in the line below
         # make sure to update the __getstate__ method as well
         # use cache to help preserve proxy objects identity in GPI
-        self._proxyObject = None
         # dirty flag is true if the object has been modified locally and its
         # contents is out-of-sync with its repository
         self._dirty = False
@@ -775,13 +760,22 @@ class GangaObject(Node):
         # Overwrite default values with any config values specified
         # self.setPropertiesFromConfig()
 
-    # construct an object of this type from the arguments. Defaults to copy
-    # constructor.
-    def __construct__(self, args={}):
-        # act as a copy constructor applying the object conversion at the same
-        # time (if applicable)
+    def __construct__(self, args):
+        # type: (Sequence) -> None
+        """
+        This acts like a secondary constructor for proxy objects.
+        Any positional (non-keyword) arguments are passed to this function to construct the object.
 
-        super(GangaObject, self).__construct__(args)
+        This default implementation performs a copy if there was only one item in the list
+        and raises an exception if there is more than one.
+
+        Args:
+            args: a list of objects
+
+        Raises:
+            TypeMismatchError: if there is more than one item in the list
+        """
+        # FIXME: This should probably be move to Proxy.py
 
         if len(args) == 0:
             return
@@ -797,7 +791,6 @@ class GangaObject(Node):
         # IMPORTANT: keep this in sync with the __init__
         #self._getReadAccess()
         this_dict = super(GangaObject, self).__getstate__()
-        #this_dict['_proxyObject'] = None
         #this_dict['_dirty'] = False
         return this_dict
 
@@ -807,7 +800,6 @@ class GangaObject(Node):
         #if '_parent' in this_dict:
         #    self._setParent(this_dict['_parent'])
         #self._setParent(None)
-        #self._proxyObject = None
         self._dirty = False
 
     @staticmethod

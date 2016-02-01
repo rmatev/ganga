@@ -579,12 +579,16 @@ class GangaRepositoryLocal(GangaRepository):
         """ Add the given objects to the repository, forcing the IDs if told to.
         Raise RepositoryError"""
 
+        logger.debug("add")
+
         if force_ids not in [None, []]:  # assume the ids are already locked by Registry
             if not len(objs) == len(force_ids):
                 raise RepositoryError(self, "Internal Error: add with different number of objects and force_ids!")
             ids = force_ids
         else:
             ids = self.sessionlock.make_new_ids(len(objs))
+
+        logger.debug("made ids")
 
         for i in range(0, len(objs)):
             fn = self.get_fn(ids[i])
@@ -604,6 +608,8 @@ class GangaRepositoryLocal(GangaRepository):
                             objs[i].getNodeAttribute(self.sub_split)[j]._dirty = True
                 except AttributeError as err:
                     logger.debug("RepoXML add Exception: %s" % str(err))
+
+        logger.debug("Added")
 
         return ids
 
@@ -724,7 +730,7 @@ class GangaRepositoryLocal(GangaRepository):
     def _actually_loaded(self, this_id):
         return this_id in self._fully_loaded.keys()
 
-    def _check_index_cache(self, obj):
+    def _check_index_cache(self, obj, this_id):
 
         new_idx_cache = self.registry.getIndexCache(stripProxy(obj))
         if new_idx_cache != obj.getNodeIndexCache():
@@ -776,7 +782,7 @@ class GangaRepositoryLocal(GangaRepository):
 
         # Check if index cache; if loaded; was valid:
         if obj.getNodeIndexCache() not in [{}]:
-            self._check_index_cache(obj)
+            self._check_index_cache(obj, this_id)
 
         obj.setNodeIndexCache({})
 
@@ -791,7 +797,11 @@ class GangaRepositoryLocal(GangaRepository):
 
         if (self._load_timestamp.get(this_id, 0) != os.fstat(fobj.fileno()).st_ctime):
 
+            import time
+            b4=time.time()
             tmpobj, errs = self.from_file(fobj)
+            a4=time.time()
+            logger.debug("Loading XML file for ID: %s took %s sec" % (this_id, str(a4-b4)))
 
             has_children = (self.sub_split is not None) and (self.sub_split in tmpobj.getNodeData()) and len(tmpobj.getNodeAttribute(self.sub_split)) == 0
 
@@ -887,38 +897,48 @@ class GangaRepositoryLocal(GangaRepository):
 
             except Exception as err:
 
-                if isType(err, XMLFileError):
-                    logger.error("XML File failed to load for Job id: %s" % str(this_id))
-                    logger.error("Actual Error was:\n%s" % str(err))
+                should_continue = self._handle_load_exception(err, fn, this_id, load_backup)
 
-                if load_backup:
-                    logger.debug("Could not load backup object #%i: %s", this_id, str(err))
-                    raise InaccessibleObjectError(self, this_id, err)
-
-                logger.debug("Could not load object #%i: %s", this_id, str(err))
-
-                # try loading backup
-                try:
-                    self.load([this_id], load_backup=True)
-                    logger.warning("Object '%s' #%i loaded from backup file - the last changes may be lost.", self.registry.name, this_id)
+                if should_continue is True:
                     continue
-                except Exception as err2:
-                    logger.debug("Exception when loading backup: %s" % str(err2) )
 
-                    if isType(err2, XMLFileError):
-                        logger.error("XML File failed to load for Job id: %s" % str(this_id))
-                        logger.error("Actual Error was:\n%s" % str(err2))
-                # add object to incomplete_objects
-                if not this_id in self.incomplete_objects:
-                    self.incomplete_objects.append(this_id)
-                # remove index so we do not continue working with wrong
-                # information
-                rmrf(os.path.dirname(fn) + ".index")
-                raise InaccessibleObjectError(self, this_id, err)
             finally:
                 fobj.close()
 
         logger.debug("Finished 'load'-ing of: %s" % str(ids))
+
+
+    def _handle_load_exception(self, err, fn, this_id):
+        if isType(err, XMLFileError):
+             logger.error("XML File failed to load for Job id: %s" % str(this_id))
+             logger.error("Actual Error was:\n%s" % str(err))
+
+        if load_backup:
+             logger.debug("Could not load backup object #%i: %s", this_id, str(err))
+             raise InaccessibleObjectError(self, this_id, err)
+
+        logger.debug("Could not load object #%i: %s", this_id, str(err))
+
+        # try loading backup
+        try:
+             self.load([this_id], load_backup=True)
+             logger.warning("Object '%s' #%i loaded from backup file - the last changes may be lost.", self.registry.name, this_id)
+             return True
+        except Exception as err2:
+             logger.debug("Exception when loading backup: %s" % str(err2) )
+
+        if isType(err2, XMLFileError):
+             logger.error("XML File failed to load for Job id: %s" % str(this_id))
+             logger.error("Actual Error was:\n%s" % str(err2))
+        # add object to incomplete_objects
+        if not this_id in self.incomplete_objects:
+             self.incomplete_objects.append(this_id)
+             # remove index so we do not continue working with wrong
+             # information
+             rmrf(os.path.dirname(fn) + ".index")
+             raise InaccessibleObjectError(self, this_id, err)
+
+        return False
 
     def delete(self, ids):
         for this_id in ids:
