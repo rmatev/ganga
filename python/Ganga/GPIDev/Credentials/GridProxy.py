@@ -205,12 +205,10 @@ class GridProxy(ICredential):
 
         Return value: None
         """
-        from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList
-        if "ICommandSet" == self.command._name or isType(self.command, GangaList):
-            if self.voms:
-                self.command = self.vomsCommand
-            else:
-                self.command = self.gridCommand
+        if self.voms:
+            self.command = self.vomsCommand
+        else:
+            self.command = self.gridCommand
         return None
 
     # Populate the self.command.currentOpts dictionary with
