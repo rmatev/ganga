@@ -10,6 +10,8 @@ from Ganga.Utility.logging import getLogger
 
 from Ganga.Core.MonitoringComponent.UpdateDict import JobAction
 
+log = getLogger()
+
 class MonitoringWorkerThread(GangaThread):
 
     def __init__(self, name):
@@ -25,7 +27,6 @@ class MonitoringWorkerThread(GangaThread):
         # import sys
         # sys.settrace(_trace)
         while not self.should_stop():
-            log = getLogger()
             log.debug("%s waiting..." % threading.currentThread())
             #setattr(threading.currentThread(), 'action', None)
 
@@ -51,6 +52,10 @@ class MonitoringWorkerThread(GangaThread):
                 continue
             if action.function == 'stop':
                 break
+
+            log.debug("From Thread: %s" % self.name)
+            log.debug("Running: ''%s'' with: '%s', '%s'" %(getName(action.function), str(action.args), str(action.kwargs)))
+
             try:
                 result = action.function(*action.args, **action.kwargs)
             except Exception as err:

@@ -32,7 +32,7 @@ THREAD_POOL_SIZE = config['update_thread_pool_size']
 Qin = Queue.Queue()
 ThreadPool = []
 
-def _makeThreadPool(threadPoolSize=THREAD_POOL_SIZE, daemonic=True):
+def _makeThreadPool(threadPoolSize=THREAD_POOL_SIZE, daemonic=False):
     for i in range(THREAD_POOL_SIZE):
         t = MonitoringWorkerThread(name="MonitoringWorker_%s" % i)
         ThreadPool.append(t)

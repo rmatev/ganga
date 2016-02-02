@@ -139,8 +139,7 @@ class UpdateDict(object):
                         (backend_name, lock._RLock__count, lock._is_owned(), [stripProxy(x).getFQID('.') for x in jobList], Qin.qsize()))
                 return True
         finally:
-            lock.release()
-        
+            pass
 
     def clearEntry(self, backend_name):
         if backend_name in self.table:
