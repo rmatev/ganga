@@ -23,3 +23,12 @@ class TestLCG(GangaUnitTest):
         j = Job()
         j.backend = LCG()
         j.submit()
+
+    def testJobComplete(self):
+        from Ganga.GPI import Job, LCG
+        from GangaTest.Framework.utils import sleep_until_completed
+
+        j = Job()
+        j.backend = LCG()
+        j.submit()
+        self.assertTrue(sleep_until_completed(j, 600), 'Timeout on job submission: job is still not finished')
