@@ -167,9 +167,9 @@ class Grid(object):
         # NB. please be aware the config for gLite WMS is NOT compatible with the config for EDG RB
         #     although both shares the same command option: '--config'
         if self.config['Config']:
-            submit_option += ' --config %s' % self.config['Config']
+            submit_option += ' --config "%s"' % self.config['Config']
         elif self.new_config:
-            submit_option += ' --config %s' % self.new_config
+            submit_option += ' --config "%s"' % self.new_config
 
         submit_option = ' %s ' % submit_option
 
