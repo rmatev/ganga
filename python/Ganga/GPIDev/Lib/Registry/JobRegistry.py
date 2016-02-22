@@ -156,9 +156,9 @@ class JobRegistrySlice(RegistrySlice):
                     return _wrap(self.objects[int(this_id)])
                 except KeyError:
                     if self.name == 'templates':
-                        raise RegistryKeyError('Template %d not found' % this_id)
+                        raise RegistryKeyError('Template %s not found' % this_id)
                     else:
-                        raise RegistryKeyError('Job %d not found' % this_id)
+                        raise RegistryKeyError('Job %s not found' % this_id)
             elif this_id.count('.') == 1 and id.split('.')[0].isdigit() and this_id.split('.')[1].isdigit():
                 ids = this_id.split(".")
             else:
