@@ -12,7 +12,7 @@ import Ganga.Utility.logging
 from LHCbDatasetUtils import isLFN, isPFN, isDiracFile, strToDataFile, getDataFile
 from Ganga.GPIDev.Base.Proxy import isType, stripProxy, getName
 from Ganga.GPIDev.Lib.Job.Job import Job, JobTemplate
-from GangaDirac.Lib.Backends.DiracUtils import get_result
+from GangaDirac.Lib.Backends.DiracUtils import get_result, getAccessURLs
 from Ganga.GPIDev.Lib.GangaList.GangaList import GangaList, makeGangaListByRef
 from Ganga.GPIDev.Adapters.IGangaFile import IGangaFile
 logger = Ganga.Utility.logging.getLogger()
@@ -276,6 +276,17 @@ class LHCbDataset(GangaDataset):
                     logger.warning("Cannot determine filename for: %s " % f)
                     raise GangaException("Cannot Get File Name")
         return names
+
+    def getFilenameList(self):
+        "return a list of filenames to be created as input.txt on the WN"
+        lfns = []
+        for f in self.files:
+            if len(f.subfiles) == 0:
+                lfns.append(f.lfn)
+            else:
+                for i in f.subfiles:
+                    lfns.append(i.lfn)
+        return getAccessURLs(lfns)
 
     def getCatalog(self, site=''):
         '''Generates an XML catalog from the dataset (returns the XML string).
